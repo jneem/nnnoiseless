@@ -8,6 +8,10 @@ readme = "README.md"
 repository = "https://github.com/jneem/nnnoiseless"
 description = "Audio denoising, derived from Xiph's RNNoise library"
 
+[[bin]]
+name = "munge"
+path = "src/munge.rs"
+
 [dependencies]
 num-complex = "0.2.4"
 once_cell = "1.4.0"

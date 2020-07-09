@@ -72,7 +72,6 @@ pub struct DenseLayer {
     pub activation: Activation,
 }
 
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct GruLayer {
     /// An array of length `3 * nb_neurons`.
@@ -101,7 +100,6 @@ pub struct RnnModel {
     pub vad_output: DenseLayer,
 }
 
-#[repr(C)]
 pub struct RnnState {
     model: &'static RnnModel,
     vad_gru_state: Vec<f32>,
@@ -127,13 +125,12 @@ impl RnnState {
 fn compute_dense(layer: &DenseLayer, output: &mut [f32], input: &[f32]) {
     let m = layer.nb_inputs;
     let n = layer.nb_neurons;
-    let stride = n;
 
     for i in 0..n {
         // Compute update gate.
         let mut sum = layer.bias[i] as f32;
         for j in 0..m {
-            sum += layer.input_weights[j * stride + i] as f32 * input[j];
+            sum += layer.input_weights[i * m + j] as f32 * input[j];
         }
         output[i] = WEIGHTS_SCALE * sum;
     }
@@ -162,16 +159,15 @@ fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
     let mut h = [0.0; MAX_NEURONS];
     let m = gru.nb_inputs;
     let n = gru.nb_neurons;
-    let stride = 3 * n;
 
     for i in 0..n {
         // Compute update gate.
         let mut sum = gru.bias[i] as f32;
         for j in 0..m {
-            sum += gru.input_weights[j * stride + i] as f32 * input[j];
+            sum += gru.input_weights[i * m + j] as f32 * input[j];
         }
         for j in 0..n {
-            sum += gru.recurrent_weights[j * stride + i] as f32 * state[j];
+            sum += gru.recurrent_weights[i * n + j] as f32 * state[j];
         }
         z[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
     }
@@ -179,10 +175,10 @@ fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
         // Compute reset gate.
         let mut sum = gru.bias[n + i] as f32;
         for j in 0..m {
-            sum += gru.input_weights[n + j * stride + i] as f32 * input[j];
+            sum += gru.input_weights[(i + n) * m + j] as f32 * input[j];
         }
         for j in 0..n {
-            sum += gru.recurrent_weights[n + j * stride + i] as f32 * state[j];
+            sum += gru.recurrent_weights[(i + n) * n + j] as f32 * state[j];
         }
         r[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
     }
@@ -190,10 +186,10 @@ fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
         // Compute output.
         let mut sum = gru.bias[2 * n + i] as f32;
         for j in 0..m {
-            sum += gru.input_weights[2 * n + j * stride + i] as f32 * input[j];
+            sum += gru.input_weights[(i + 2 * n) * m + j] as f32 * input[j];
         }
         for j in 0..n {
-            sum += gru.recurrent_weights[2 * n + j * stride + i] as f32 * state[j] * r[j];
+            sum += gru.recurrent_weights[(i + 2 * n) * n + j] as f32 * state[j] * r[j];
         }
         let sum = match gru.activation {
             Activation::Sigmoid => sigmoid_approx(WEIGHTS_SCALE * sum),
