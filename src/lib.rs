@@ -107,7 +107,7 @@ fn find_best_pitch(xcorr: &[f32], ys: &[f32], len: usize) -> (usize, usize) {
 }
 
 // TODO: document this. There are some puzzles, commented below.
-pub fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> usize {
+pub(crate) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> usize {
     let lag = len + max_pitch;
 
     // FIXME: allocation
@@ -214,7 +214,7 @@ fn celt_autocorr(x: &[f32], ac: &mut [f32]) {
     }
 }
 
-pub fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
+pub(crate) fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
     let mut ac = [0.0; 5];
     let mut lpc = [0.0; 4];
     let mut mem = [0.0; 5];
@@ -371,27 +371,27 @@ fn remove_doubling(
     (t0, pg)
 }
 
-pub const FRAME_SIZE_SHIFT: usize = 2;
-pub const FRAME_SIZE: usize = 120 << FRAME_SIZE_SHIFT;
-pub const WINDOW_SIZE: usize = 2 * FRAME_SIZE;
-pub const FREQ_SIZE: usize = FRAME_SIZE + 1;
+pub(crate) const FRAME_SIZE_SHIFT: usize = 2;
+pub(crate) const FRAME_SIZE: usize = 120 << FRAME_SIZE_SHIFT;
+pub(crate) const WINDOW_SIZE: usize = 2 * FRAME_SIZE;
+pub(crate) const FREQ_SIZE: usize = FRAME_SIZE + 1;
 
-pub const PITCH_MIN_PERIOD: usize = 60;
-pub const PITCH_MAX_PERIOD: usize = 768;
-pub const PITCH_FRAME_SIZE: usize = 960;
-pub const PITCH_BUF_SIZE: usize = PITCH_MAX_PERIOD + PITCH_FRAME_SIZE;
+pub(crate) const PITCH_MIN_PERIOD: usize = 60;
+pub(crate) const PITCH_MAX_PERIOD: usize = 768;
+pub(crate) const PITCH_FRAME_SIZE: usize = 960;
+pub(crate) const PITCH_BUF_SIZE: usize = PITCH_MAX_PERIOD + PITCH_FRAME_SIZE;
 
-pub const NB_BANDS: usize = 22;
-pub const CEPS_MEM: usize = 8;
+pub(crate) const NB_BANDS: usize = 22;
+pub(crate) const CEPS_MEM: usize = 8;
 const NB_DELTA_CEPS: usize = 6;
-pub const NB_FEATURES: usize = NB_BANDS + 3 * NB_DELTA_CEPS + 2;
+pub(crate) const NB_FEATURES: usize = NB_BANDS + 3 * NB_DELTA_CEPS + 2;
 const EBAND_5MS: [usize; 22] = [
     // 0  200 400 600 800  1k 1.2 1.4 1.6  2k 2.4 2.8 3.2  4k 4.8 5.6 6.8  8k 9.6 12k 15.6 20k*/
     0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 34, 40, 48, 60, 78, 100,
 ];
 type Complex = num_complex::Complex<f32>;
 
-pub fn compute_band_corr(out: &mut [f32], x: &[Complex], p: &[Complex]) {
+pub(crate) fn compute_band_corr(out: &mut [f32], x: &[Complex], p: &[Complex]) {
     for y in out.iter_mut() {
         *y = 0.0;
     }
@@ -467,7 +467,7 @@ fn common() -> &'static CommonState {
 }
 
 /// A brute-force DCT (discrete cosine transform) of size NB_BANDS.
-pub fn dct(out: &mut [f32], x: &[f32]) {
+pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
     let c = common();
     for i in 0..NB_BANDS {
         let mut sum = 0.0;

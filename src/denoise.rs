@@ -3,7 +3,34 @@ use crate::{
     PITCH_FRAME_SIZE, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, WINDOW_SIZE,
 };
 
-#[repr(C)]
+/// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
+/// that are used while denoising. As such, this is quite a large struct, and should probably be
+/// kept behind some kind of pointer.
+///
+/// # Example
+///
+/// ```rust
+/// # use nnnoiseless::DenoiseState;
+/// // One second of 440Hz sine wave at 48kHz sample rate. Note that the input data consists of
+/// // `f32`s, but the values should be in the range of an `i16`.
+/// let sine: Vec<_> = (0..48_000)
+///     .map(|x| (x as f32 * 440.0 * 2.0 * std::f32::consts::PI / 48_000.0).sin() * i16::MAX as f32)
+///     .collect();
+/// let mut output = Vec::new();
+/// let mut out_buf = [0.0; DenoiseState::FRAME_SIZE];
+/// let mut denoise = DenoiseState::new();
+/// let mut first = true;
+/// for chunk in sine.chunks_exact(DenoiseState::FRAME_SIZE) {
+///     denoise.process_frame(&mut out_buf[..], chunk);
+///
+///     // We throw away the first output, as discussed in the documentation for
+///     //`DenoiseState::process_frame`.
+///     if !first {
+///         output.extend_from_slice(&out_buf[..]);
+///     }
+///     first = false;
+/// }
+/// ```
 pub struct DenoiseState {
     analysis_mem: [f32; FRAME_SIZE],
     /// This is some sort of ring buffer, storing the last bunch of cepstra.
@@ -13,7 +40,6 @@ pub struct DenoiseState {
     mem_id: usize,
     synthesis_mem: [f32; FRAME_SIZE],
     pitch_buf: [f32; crate::PITCH_BUF_SIZE],
-    pitch_enh_buf: [f32; crate::PITCH_BUF_SIZE],
     last_gain: f32,
     last_period: usize,
     mem_hp_x: [f32; 2],
@@ -22,6 +48,10 @@ pub struct DenoiseState {
 }
 
 impl DenoiseState {
+    /// A `DenoiseState` processes this many samples at a time.
+    pub const FRAME_SIZE: usize = FRAME_SIZE;
+
+    /// Creates a new `DenoiseState`.
     pub fn new() -> Box<DenoiseState> {
         Box::new(DenoiseState {
             analysis_mem: [0.0; FRAME_SIZE],
@@ -29,7 +59,6 @@ impl DenoiseState {
             mem_id: 0,
             synthesis_mem: [0.0; FRAME_SIZE],
             pitch_buf: [0.0; PITCH_BUF_SIZE],
-            pitch_enh_buf: [0.0; PITCH_BUF_SIZE],
             last_gain: 0.0,
             last_period: 0,
             mem_hp_x: [0.0; 2],
@@ -38,8 +67,15 @@ impl DenoiseState {
         })
     }
 
-    pub fn process_frame(&mut self, output: &mut [f32], input: &[f32]) -> f32 {
-        process_frame(self, output, input)
+    /// Processes a chunk of samples.
+    ///
+    /// Both `output` and `input` should be slices of length `DenoiseState::FRAME_SIZE`.
+    ///
+    /// The current output of `process_frame` depends on the current input, but also on the
+    /// preceding inputs. Because of this, you might prefer to discard the very first output; it
+    /// will contain some fade-in artifacts.
+    pub fn process_frame(&mut self, output: &mut [f32], input: &[f32]) {
+        process_frame(self, output, input);
     }
 }
 
