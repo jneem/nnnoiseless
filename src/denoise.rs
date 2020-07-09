@@ -286,19 +286,6 @@ fn pitch_filter(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn rnnoise_process_frame(
-    state: *mut DenoiseState,
-    output: *mut f32,
-    input: *const f32,
-) -> f32 {
-    unsafe {
-        let output = std::slice::from_raw_parts_mut(output, FRAME_SIZE);
-        let input = std::slice::from_raw_parts(input, FRAME_SIZE);
-        process_frame(&mut *state, output, input)
-    }
-}
-
 fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) -> f32 {
     let mut x_freq = [Complex::from(0.0); FREQ_SIZE];
     let mut p = [Complex::from(0.0); WINDOW_SIZE];
@@ -352,11 +339,4 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
 
     frame_synthesis(state, output, &x_freq[..]);
     vad_prob[0]
-}
-
-#[no_mangle]
-pub extern "C" fn rnnoise_create(model: *const ()) -> *mut DenoiseState {
-    assert!(model.is_null());
-    let ret = DenoiseState::new();
-    Box::leak(ret) as *mut _
 }
