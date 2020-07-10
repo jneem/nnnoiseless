@@ -122,16 +122,18 @@ impl RnnState {
     }
 }
 
+fn inner_p(weights: &[i8], input: &[f32]) -> f32 {
+    weights.iter().zip(input).map(|(&x, &y)| x as f32 * y).sum()
+}
+
 fn compute_dense(layer: &DenseLayer, output: &mut [f32], input: &[f32]) {
     let m = layer.nb_inputs;
     let n = layer.nb_neurons;
 
     for i in 0..n {
         // Compute update gate.
-        let mut sum = layer.bias[i] as f32;
-        for j in 0..m {
-            sum += layer.input_weights[i * m + j] as f32 * input[j];
-        }
+        let sum =
+            layer.bias[i] as f32 + inner_p(&layer.input_weights[(i * m)..((i + 1) * m)], input);
         output[i] = WEIGHTS_SCALE * sum;
     }
     match layer.activation {
@@ -162,35 +164,34 @@ fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
 
     for i in 0..n {
         // Compute update gate.
-        let mut sum = gru.bias[i] as f32;
-        for j in 0..m {
-            sum += gru.input_weights[i * m + j] as f32 * input[j];
-        }
-        for j in 0..n {
-            sum += gru.recurrent_weights[i * n + j] as f32 * state[j];
-        }
+        let sum = gru.bias[i] as f32
+            + inner_p(&gru.input_weights[(i * m)..((i + 1) * m)], input)
+            + inner_p(&gru.recurrent_weights[(i * n)..((i + 1) * n)], state);
         z[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
     }
     for i in 0..n {
         // Compute reset gate.
-        let mut sum = gru.bias[n + i] as f32;
-        for j in 0..m {
-            sum += gru.input_weights[(i + n) * m + j] as f32 * input[j];
-        }
-        for j in 0..n {
-            sum += gru.recurrent_weights[(i + n) * n + j] as f32 * state[j];
-        }
-        r[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
+        let sum = gru.bias[n + i] as f32
+            + inner_p(&gru.input_weights[((i + n) * m)..((i + n + 1) * m)], input)
+            + inner_p(
+                &gru.recurrent_weights[((i + n) * n)..((i + n + 1) * n)],
+                state,
+            );
+        // NOTE: our r[i] differs from the one in rnnoise because we're premultiplying it by
+        // state[i].
+        r[i] = state[i] * sigmoid_approx(WEIGHTS_SCALE * sum);
     }
     for i in 0..n {
         // Compute output.
-        let mut sum = gru.bias[2 * n + i] as f32;
-        for j in 0..m {
-            sum += gru.input_weights[(i + 2 * n) * m + j] as f32 * input[j];
-        }
-        for j in 0..n {
-            sum += gru.recurrent_weights[(i + 2 * n) * n + j] as f32 * state[j] * r[j];
-        }
+        let sum = gru.bias[2 * n + i] as f32
+            + inner_p(
+                &gru.input_weights[((i + 2 * n) * m)..((i + 2 * n + 1) * m)],
+                input,
+            )
+            + inner_p(
+                &gru.recurrent_weights[((i + 2 * n) * n)..((i + 2 * n + 1) * n)],
+                &r[..],
+            );
         let sum = match gru.activation {
             Activation::Sigmoid => sigmoid_approx(WEIGHTS_SCALE * sum),
             Activation::Tanh => tansig_approx(WEIGHTS_SCALE * sum),
