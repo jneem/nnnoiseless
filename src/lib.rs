@@ -52,15 +52,74 @@ fn celt_lpc(lpc: &mut [f32], ac: &[f32]) {
     }
 }
 
-// Computes various terms of the cross-correlation between x and y. Note that
-// the C version has been heavily optimized, unlike this one.
-fn pitch_xcorr(x: &[f32], y: &[f32], xcorr: &mut [f32]) {
-    for i in 0..xcorr.len() {
-        let mut sum = 0.0;
-        for j in 0..x.len() {
-            sum += x[j] * y[j + i];
+// Computes various terms of the cross-correlation between x and y (the number of terms to compute
+// is determined by the size of `xcorr`).
+fn pitch_xcorr(xs: &[f32], ys: &[f32], xcorr: &mut [f32]) {
+    // The un-optimized version of this function is:
+    //
+    // for i in 0..xcorr.len() {
+    //    xcorr[i] = xs.iter().zip(&ys[i..]).map(|(&x, &y)| x * y).sum();
+    // }
+    //
+    // To optimize it, we unroll both the outer and inner loops four times each. This is a huge win
+    // because it improves the pattern of access to ys. The compiler does a good job of vectorizing
+    // the inner loop. (Maybe if we unrolled 8 times, it would be better on AVX?)
+
+    let xcorr_len_4 = xcorr.len() - xcorr.len() % 4;
+    let xs_len_4 = xs.len() - xs.len() % 4;
+
+    for i in (0..xcorr_len_4).step_by(4) {
+        let mut c0 = 0.0;
+        let mut c1 = 0.0;
+        let mut c2 = 0.0;
+        let mut c3 = 0.0;
+
+        let mut y0 = ys[i + 0];
+        let mut y1 = ys[i + 1];
+        let mut y2 = ys[i + 2];
+        let mut y3 = ys[i + 3];
+
+        for (x, y) in xs.chunks_exact(4).zip(ys[(i + 4)..].chunks_exact(4)) {
+            c0 += x[0] * y0;
+            c1 += x[0] * y1;
+            c2 += x[0] * y2;
+            c3 += x[0] * y3;
+
+            y0 = y[0];
+            c0 += x[1] * y1;
+            c1 += x[1] * y2;
+            c2 += x[1] * y3;
+            c3 += x[1] * y0;
+
+            y1 = y[1];
+            c0 += x[2] * y2;
+            c1 += x[2] * y3;
+            c2 += x[2] * y0;
+            c3 += x[2] * y1;
+
+            y2 = y[2];
+            c0 += x[3] * y3;
+            c1 += x[3] * y0;
+            c2 += x[3] * y1;
+            c3 += x[3] * y2;
+
+            y3 = y[3];
         }
-        xcorr[i] = sum;
+
+        for j in xs_len_4..xs.len() {
+            c0 += xs[j] * ys[i + 0 + j];
+            c1 += xs[j] * ys[i + 1 + j];
+            c2 += xs[j] * ys[i + 2 + j];
+            c3 += xs[j] * ys[i + 3 + j];
+        }
+        xcorr[i + 0] = c0;
+        xcorr[i + 1] = c1;
+        xcorr[i + 2] = c2;
+        xcorr[i + 3] = c3;
+    }
+
+    for i in xcorr_len_4..xcorr.len() {
+        xcorr[i] = xs.iter().zip(&ys[i..]).map(|(&x, &y)| x * y).sum();
     }
 }
 
