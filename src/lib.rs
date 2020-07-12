@@ -8,11 +8,24 @@ mod rnn;
 pub use denoise::DenoiseState;
 
 fn inner_prod(xs: &[f32], ys: &[f32], n: usize) -> f32 {
-    xs[..n]
-        .iter()
-        .zip(ys[..n].iter())
-        .map(|(&x, &y)| x * y)
-        .sum()
+    let mut sum0 = 0.0;
+    let mut sum1 = 0.0;
+    let mut sum2 = 0.0;
+    let mut sum3 = 0.0;
+
+    let n_4 = n - n % 4;
+    for (x, y) in xs[..n_4].chunks_exact(4).zip(ys[..n_4].chunks_exact(4)) {
+        sum0 += x[0] * y[0];
+        sum1 += x[1] * y[1];
+        sum2 += x[2] * y[2];
+        sum3 += x[3] * y[3];
+    }
+
+    let mut sum = sum0 + sum1 + sum2 + sum3;
+    for (&x, &y) in xs[n_4..n].iter().zip(&ys[n_4..n]) {
+        sum += x * y;
+    }
+    sum
 }
 
 fn celt_lpc(lpc: &mut [f32], ac: &[f32]) {

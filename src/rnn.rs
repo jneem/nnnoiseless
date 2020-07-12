@@ -122,8 +122,26 @@ impl RnnState {
     }
 }
 
-fn inner_p(weights: &[i8], input: &[f32]) -> f32 {
-    weights.iter().zip(input).map(|(&x, &y)| x as f32 * y).sum()
+fn inner_p(xs: &[i8], ys: &[f32]) -> f32 {
+    let n = xs.len();
+    let mut sum0 = 0.0;
+    let mut sum1 = 0.0;
+    let mut sum2 = 0.0;
+    let mut sum3 = 0.0;
+
+    let n_4 = n - n % 4;
+    for (x, y) in xs[..n_4].chunks_exact(4).zip(ys[..n_4].chunks_exact(4)) {
+        sum0 += x[0] as f32 * y[0];
+        sum1 += x[1] as f32 * y[1];
+        sum2 += x[2] as f32 * y[2];
+        sum3 += x[3] as f32 * y[3];
+    }
+
+    let mut sum = sum0 + sum1 + sum2 + sum3;
+    for (&x, &y) in xs[n_4..n].iter().zip(&ys[n_4..n]) {
+        sum += x as f32 * y;
+    }
+    sum
 }
 
 fn compute_dense(layer: &DenseLayer, output: &mut [f32], input: &[f32]) {
