@@ -1,5 +1,6 @@
 # nnnoiseless
 ![Rust](https://github.com/jneem/nnnoiseless/workflows/Rust/badge.svg)
+![docs]( https://docs.rs/nnnoiseless/badge.svg)
 
 `nnnoiseless` is a rust crate for suppressing audio noise. It is a (safe) rust port of
 the [`RNNoise`](https://github.com/xiph/rnnoise) C library, and is based on a recurrent
