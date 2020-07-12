@@ -52,7 +52,7 @@ fn celt_lpc(lpc: &mut [f32], ac: &[f32]) {
     }
 }
 
-// Computes various terms of the correlation (what's the right word?) between x and y. Note that
+// Computes various terms of the cross-correlation between x and y. Note that
 // the C version has been heavily optimized, unlike this one.
 fn pitch_xcorr(x: &[f32], y: &[f32], xcorr: &mut [f32]) {
     for i in 0..xcorr.len() {
@@ -201,7 +201,6 @@ fn fir5(x: &[f32], num: &[f32], y: &mut [f32], mem: &mut [f32]) {
 fn celt_autocorr(x: &[f32], ac: &mut [f32]) {
     let n = x.len();
     let lag = ac.len() - 1;
-    // FIXME: check if ac.len() is lag or lag - 1.
     let fast_n = n - lag;
     pitch_xcorr(&x[0..fast_n], x, ac);
 
