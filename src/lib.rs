@@ -522,4 +522,52 @@ fn inverse_transform(output: &mut [f32], input: &[Complex]) {
     }
 }
 
-//
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_f32(bytes: &[u8]) -> Vec<f32> {
+        let mut ret = Vec::with_capacity(bytes.len() / 2);
+        for x in bytes.chunks_exact(2) {
+            ret.push(i16::from_le_bytes([x[0], x[1]]) as f32);
+        }
+        ret
+    }
+
+    fn to_i16(bytes: &[u8]) -> Vec<i16> {
+        let mut ret = Vec::with_capacity(bytes.len() / 2);
+        for x in bytes.chunks_exact(2) {
+            ret.push(i16::from_le_bytes([x[0], x[1]]));
+        }
+        ret
+    }
+
+    #[test]
+    fn compare_to_reference() {
+        let reference_input = to_f32(include_bytes!("../tests/testing.raw"));
+        let reference_output = to_i16(include_bytes!("../tests/reference_output.raw"));
+        let mut output = Vec::new();
+        let mut out_buf = [0.0; FRAME_SIZE];
+        let mut state = DenoiseState::new();
+        let mut first = true;
+        for chunk in reference_input.chunks_exact(FRAME_SIZE) {
+            state.process_frame(&mut out_buf[..], chunk);
+            if !first {
+                output.extend_from_slice(&out_buf[..]);
+            }
+            first = false;
+        }
+
+        assert_eq!(output.len(), reference_output.len());
+        let output = output.into_iter().map(|x| x as i16).collect::<Vec<_>>();
+        let xx: f64 = reference_output.iter().map(|&n| n as f64 * n as f64).sum();
+        let yy: f64 = output.iter().map(|&n| n as f64 * n as f64).sum();
+        let xy: f64 = reference_output
+            .into_iter()
+            .zip(output)
+            .map(|(n, m)| n as f64 * m as f64)
+            .sum();
+        let corr = xy / (xx.sqrt() * yy.sqrt());
+        assert!((corr - 1.0).abs() < 1e-4);
+    }
+}
