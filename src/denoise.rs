@@ -74,8 +74,8 @@ impl DenoiseState {
     /// The current output of `process_frame` depends on the current input, but also on the
     /// preceding inputs. Because of this, you might prefer to discard the very first output; it
     /// will contain some fade-in artifacts.
-    pub fn process_frame(&mut self, output: &mut [f32], input: &[f32]) {
-        process_frame(self, output, input);
+    pub fn process_frame(&mut self, output: &mut [f32], input: &[f32]) -> f32 {
+        process_frame(self, output, input)
     }
 }
 
