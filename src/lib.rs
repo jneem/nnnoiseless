@@ -190,12 +190,14 @@ fn find_best_pitch(xcorr: &[f32], ys: &[f32], len: usize) -> (usize, usize) {
 }
 
 // TODO: document this. There are some puzzles, commented below.
-pub(crate) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize) -> usize {
-    let lag = len + max_pitch;
-
-    // FIXME: allocation
-    let mut x_lp4 = vec![0.0; len / 4];
-    let mut y_lp4 = vec![0.0; lag / 4];
+pub(crate) fn pitch_search(
+    x_lp: &[f32],
+    y: &[f32],
+    len: usize,
+    max_pitch: usize,
+    x_lp4: &mut [f32],
+    y_lp4: &mut [f32],
+) -> usize {
     // It seems like only the first half of this is really used? The second half seems to always
     // stay zero.
     let mut xcorr = vec![0.0; max_pitch / 2];
@@ -337,6 +339,7 @@ fn remove_doubling(
     mut t0: usize,
     mut prev_period: usize,
     prev_gain: f32,
+    yy_lookup: &mut [f32],
 ) -> (usize, f32) {
     let init_min_period = min_period;
     min_period /= 2;
@@ -350,8 +353,6 @@ fn remove_doubling(
 
     // Note that because we can't index with negative numbers, the x in the C code is our
     // x[max_period..].
-    // FIXME: allocation
-    let mut yy_lookup = vec![0.0f32; max_period + 1];
     let xx = inner_prod(&x[max_period..], &x[max_period..], n);
     let mut xy = inner_prod(&x[max_period..], &x[(max_period - t0)..], n);
     yy_lookup[0] = xx;

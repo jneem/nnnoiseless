@@ -108,6 +108,9 @@ fn compute_frame_features(
     // Apparently, PITCH_BUF_SIZE wasn't the best name...
     let mut pitch_buf = [0.0; PITCH_BUF_SIZE / 2];
     let mut tmp = [0.0; NB_BANDS];
+    let mut scratch = [0.0; PITCH_MAX_PERIOD + 1];
+    let mut scratch2 = [0.0; PITCH_FRAME_SIZE / 4];
+    let mut scratch3 = [0.0; PITCH_FRAME_SIZE / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4];
 
     frame_analysis(state, x, ex, input);
     for i in 0..(PITCH_BUF_SIZE - FRAME_SIZE) {
@@ -123,6 +126,8 @@ fn compute_frame_features(
         &pitch_buf,
         PITCH_FRAME_SIZE,
         PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD,
+        &mut scratch2,
+        &mut scratch3,
     );
     let pitch_idx = PITCH_MAX_PERIOD - pitch_idx;
 
@@ -134,6 +139,7 @@ fn compute_frame_features(
         pitch_idx,
         state.last_period,
         state.last_gain,
+        &mut scratch[..],
     );
     state.last_period = pitch_idx;
     state.last_gain = gain;
