@@ -28,7 +28,18 @@ fn inner_prod(xs: &[f32], ys: &[f32], n: usize) -> f32 {
     sum
 }
 
-fn celt_lpc(lpc: &mut [f32], ac: &[f32]) {
+/// Does linear predictive coding (LPC) for a signal. The LPC coefficients are put into `lpc`,
+/// which should have the same length as `ac`.
+///
+/// Very quick summary, mostly for my own understanding: the idea of LPC is to approximate a signal
+/// x by shifted versions of it, so x[t] is approximately $\sum_i a_i x_{t-i}$, where the $a_i$ are
+/// the LPC coefficients. This function determines the LPC coefficients using linear regression,
+/// where the main observation is that this only requires a few auto-correlations. Therefore, the
+/// function takes the autocorrelations as a parameter instead of the original signal.
+///
+/// This function solves the linear regression iteratively by first solving the smaller versions
+/// (i.e., first solve the linear regression for one lag, then for two lags, and so on).
+fn lpc(lpc: &mut [f32], ac: &[f32]) {
     let p = lpc.len();
     let mut error = ac[0];
 
@@ -191,6 +202,7 @@ pub(crate) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize
 
     // It says "again", but this was only downsampled once? Also, it's downsampling only the first
     // half by 2.
+    // Ah, this is called on the result of pitch_downsample.
     /* Downsample by 2 again */
     for j in 0..x_lp4.len() {
         x_lp4[j] = x_lp[2 * j];
@@ -204,18 +216,14 @@ pub(crate) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize
         find_best_pitch(&xcorr[0..(max_pitch / 4)], &y_lp4, len / 4);
 
     /* Finer search with 2x decimation */
-    for i in 0..(max_pitch as isize / 2) {
-        xcorr[i as usize] = 0.0;
-        if (i - 2 * best_pitch as isize).abs() > 2 && (i - 2 * second_best_pitch as isize).abs() > 2
+    for i in 0..(max_pitch / 2) {
+        xcorr[i] = 0.0;
+        if (i as isize - 2 * best_pitch as isize).abs() > 2
+            && (i as isize - 2 * second_best_pitch as isize).abs() > 2
         {
             continue;
         }
-        let mut sum = 0.0;
-        // TODO: factor out an inner_prod function
-        for j in 0..(len / 2) {
-            sum += x_lp[j] * y[j + i as usize];
-        }
-        xcorr[i as usize] = sum.max(-1.0);
+        xcorr[i] = inner_prod(&x_lp[..], &y[i..], len / 2).max(-1.0);
     }
 
     let (best_pitch, _) = find_best_pitch(&xcorr, &y, len / 2);
@@ -238,34 +246,28 @@ pub(crate) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize
     (2 * best_pitch as isize - offset) as usize
 }
 
-fn fir5(x: &[f32], num: &[f32], y: &mut [f32], mem: &mut [f32]) {
+fn fir5_in_place(xs: &mut [f32], num: &[f32]) {
     let num0 = num[0];
     let num1 = num[1];
     let num2 = num[2];
     let num3 = num[3];
     let num4 = num[4];
 
-    let mut mem0 = mem[0];
-    let mut mem1 = mem[1];
-    let mut mem2 = mem[2];
-    let mut mem3 = mem[3];
-    let mut mem4 = mem[4];
+    let mut mem0 = 0.0;
+    let mut mem1 = 0.0;
+    let mut mem2 = 0.0;
+    let mut mem3 = 0.0;
+    let mut mem4 = 0.0;
 
-    for i in 0..x.len() {
-        let sum = x[i] + num0 * mem0 + num1 * mem1 + num2 * mem2 + num3 * mem3 + num4 * mem4;
+    for x in xs {
+        let out = *x + num0 * mem0 + num1 * mem1 + num2 * mem2 + num3 * mem3 + num4 * mem4;
         mem4 = mem3;
         mem3 = mem2;
         mem2 = mem1;
         mem1 = mem0;
-        mem0 = x[i];
-        y[i] = sum;
+        mem0 = *x;
+        *x = out;
     }
-
-    mem[0] = mem0;
-    mem[1] = mem1;
-    mem[2] = mem2;
-    mem[3] = mem3;
-    mem[4] = mem4;
 }
 
 /// Computes the autocorrelation of the sequence `x` (the number of terms to compute is determined
@@ -287,9 +289,8 @@ fn celt_autocorr(x: &[f32], ac: &mut [f32]) {
 
 pub(crate) fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
     let mut ac = [0.0; 5];
-    let mut lpc = [0.0; 4];
-    let mut mem = [0.0; 5];
-    let mut lpc2 = [0.0; 5];
+    let mut lpc_coeffs = [0.0; 4];
+    let mut lpc_coeffs2 = [0.0; 5];
 
     for i in 1..(x.len() / 2) {
         x_lp[i] = ((x[2 * i - 1] + x[2 * i + 1]) / 2.0 + x[2 * i]) / 2.0;
@@ -305,22 +306,20 @@ pub(crate) fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
         ac[i] -= ac[i] * (0.008 * i as f32) * (0.008 * i as f32);
     }
 
-    celt_lpc(&mut lpc, &ac);
+    lpc(&mut lpc_coeffs, &ac);
     let mut tmp = 1.0;
     for i in 0..4 {
         tmp *= 0.9;
-        lpc[i] *= tmp;
+        lpc_coeffs[i] *= tmp;
     }
     // Add a zero
-    lpc2[0] = lpc[0] + 0.8;
-    lpc2[1] = lpc[1] + 0.8 * lpc[0];
-    lpc2[2] = lpc[2] + 0.8 * lpc[1];
-    lpc2[3] = lpc[3] + 0.8 * lpc[2];
-    lpc2[4] = 0.8 * lpc[3];
+    lpc_coeffs2[0] = lpc_coeffs[0] + 0.8;
+    lpc_coeffs2[1] = lpc_coeffs[1] + 0.8 * lpc_coeffs[0];
+    lpc_coeffs2[2] = lpc_coeffs[2] + 0.8 * lpc_coeffs[1];
+    lpc_coeffs2[3] = lpc_coeffs[3] + 0.8 * lpc_coeffs[2];
+    lpc_coeffs2[4] = 0.8 * lpc_coeffs[3];
 
-    // FIXME: allocation
-    let x_lp_copy = x_lp.to_owned();
-    fir5(&x_lp_copy, &lpc2, x_lp, &mut mem);
+    fir5_in_place(x_lp, &lpc_coeffs2);
 }
 
 fn pitch_gain(xy: f32, xx: f32, yy: f32) -> f32 {
