@@ -11,7 +11,7 @@ tool is provided as an example. It operates on RAW 16-bit little-endian mono
 PCM files sampled at 48 kHz. It can be used as:
 
 ```
-cargo run --release --example rnnoise_demo INPUT.raw OUTPUT.raw
+cargo run --release --example nnnoiseless INPUT.raw OUTPUT.raw
 ```
 
 The output is also a 16-bit raw PCM file.
