@@ -243,13 +243,17 @@ fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &[Complex]) {
     }
 }
 
-fn biquad(y: &mut [f32], mem: &mut [f32], x: &[f32], b: &[f32], a: &[f32]) {
-    for i in 0..x.len() {
-        let xi = x[i] as f64;
-        let yi = (x[i] + mem[0]) as f64;
-        mem[0] = (mem[1] as f64 + (b[0] as f64 * xi - a[0] as f64 * yi)) as f32;
-        mem[1] = (b[1] as f64 * xi - a[1] as f64 * yi) as f32;
-        y[i] = yi as f32;
+fn biquad(ys: &mut [f32], mem: &mut [f32], xs: &[f32], b: &[f32], a: &[f32]) {
+    let a0 = a[0] as f64;
+    let a1 = a[1] as f64;
+    let b0 = b[0] as f64;
+    let b1 = b[1] as f64;
+    for (&x, y) in xs.iter().zip(ys) {
+        let x64 = x as f64;
+        let y64 = x64 + mem[0] as f64;
+        mem[0] = (mem[1] as f64 + (b0 * x64 - a0 * y64)) as f32;
+        mem[1] = (b1 * x64 - a1 * y64) as f32;
+        *y = y64 as f32;
     }
 }
 
