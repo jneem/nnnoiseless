@@ -579,17 +579,17 @@ fn forward_transform(output: &mut [Complex], input: &[f32]) {
     let mut complex_input = [Complex::from(0.0); WINDOW_SIZE];
     let mut scratch_output = [Complex::from(0.0); WINDOW_SIZE];
     let c = common();
-    for i in 0..WINDOW_SIZE {
-        complex_input[i].re = input[i];
+    for (&src, dst) in input.iter().zip(&mut complex_input[..]) {
+        dst.re = src;
     }
     c.fft
         .process(&mut complex_input[..], &mut scratch_output[..]);
 
-    // The kissfft convention, as far as I can tell, is the normalize the forward transform but not
-    // the inverse transform.
+    // In the original RNNoise code, the forward transform is normalized and the inverse
+    // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
     let norm = 1.0 / WINDOW_SIZE as f32;
-    for i in 0..FREQ_SIZE {
-        output[i] = scratch_output[i] * norm;
+    for (&src, dst) in scratch_output.iter().zip(output) {
+        *dst = src * norm;
     }
 }
 
@@ -597,17 +597,17 @@ fn inverse_transform(output: &mut [f32], input: &[Complex]) {
     let mut scratch_input = [Complex::from(0.0); WINDOW_SIZE];
     let mut complex_output = [Complex::from(0.0); WINDOW_SIZE];
     let c = common();
-    for i in 0..FREQ_SIZE {
-        scratch_input[i] = input[i];
+    for (&src, dst) in input.iter().zip(&mut scratch_input[..]) {
+        *dst = src;
     }
-    for i in FREQ_SIZE..WINDOW_SIZE {
-        scratch_input[i] = scratch_input[WINDOW_SIZE - i].conj();
+    for (&src, dst) in input[1..].iter().zip(scratch_input.iter_mut().rev()) {
+        *dst = src.conj();
     }
 
     c.inv_fft
         .process(&mut scratch_input[..], &mut complex_output[..]);
-    for i in 0..WINDOW_SIZE {
-        output[i] = complex_output[i].re;
+    for (&src, dst) in complex_output.iter().zip(output) {
+        *dst = src.re;
     }
 }
 
