@@ -87,7 +87,7 @@ impl DenoiseState {
 fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32]) {
     let mut buf = [0.0; WINDOW_SIZE];
     crate::apply_window(&mut buf[..], state.input(WINDOW_SIZE));
-    crate::forward_transform(x, &buf[..]);
+    crate::forward_transform(x, &mut buf[..]);
     crate::compute_band_corr(ex, x, x);
 }
 
@@ -136,7 +136,7 @@ fn compute_frame_features(
     state.last_gain = gain;
 
     crate::apply_window(&mut p_buf[..], state.input(WINDOW_SIZE + pitch_idx));
-    crate::forward_transform(p, &p_buf[..]);
+    crate::forward_transform(p, &mut p_buf[..]);
     crate::compute_band_corr(ep, p, p);
     crate::compute_band_corr(exp, x, p);
     for i in 0..NB_BANDS {
@@ -221,7 +221,7 @@ fn compute_frame_features(
     return 0;
 }
 
-fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &[Complex]) {
+fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &mut [Complex]) {
     let mut x = [0.0; WINDOW_SIZE];
     crate::inverse_transform(&mut x[..], y);
     crate::apply_window_in_place(&mut x[..]);
@@ -286,7 +286,7 @@ fn pitch_filter(
 
 fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) -> f32 {
     let mut x_freq = [Complex::from(0.0); FREQ_SIZE];
-    let mut p = [Complex::from(0.0); WINDOW_SIZE];
+    let mut p = [Complex::from(0.0); FREQ_SIZE];
     let mut ex = [0.0; NB_BANDS];
     let mut ep = [0.0; NB_BANDS];
     let mut exp = [0.0; NB_BANDS];
@@ -338,6 +338,6 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
         }
     }
 
-    frame_synthesis(state, output, &x_freq[..]);
+    frame_synthesis(state, output, &mut x_freq[..]);
     vad_prob[0]
 }

@@ -1,7 +1,7 @@
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
 
 mod denoise;
+mod fft;
 mod model;
 mod rnn;
 
@@ -499,8 +499,7 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32]) {
 struct CommonState {
     window: [f32; WINDOW_SIZE],
     dct_table: [f32; NB_BANDS * NB_BANDS],
-    fft: Arc<dyn rustfft::FFT<f32>>,
-    inv_fft: Arc<dyn rustfft::FFT<f32>>,
+    fft: crate::fft::RealFft,
 }
 
 static COMMON: OnceCell<CommonState> = OnceCell::new();
@@ -526,13 +525,11 @@ fn common() -> &'static CommonState {
             }
         }
 
-        let fft = rustfft::FFTplanner::new(false).plan_fft(WINDOW_SIZE);
-        let inv_fft = rustfft::FFTplanner::new(true).plan_fft(WINDOW_SIZE);
+        let fft = crate::fft::RealFft::new(WINDOW_SIZE);
         let _ = COMMON.set(CommonState {
             window,
             dct_table,
             fft,
-            inv_fft,
         });
     }
     COMMON.get().unwrap()
@@ -575,40 +572,23 @@ fn apply_window_in_place(xs: &mut [f32]) {
     }
 }
 
-fn forward_transform(output: &mut [Complex], input: &[f32]) {
-    let mut complex_input = [Complex::from(0.0); WINDOW_SIZE];
-    let mut scratch_output = [Complex::from(0.0); WINDOW_SIZE];
+fn forward_transform(output: &mut [Complex], input: &mut [f32]) {
     let c = common();
-    for (&src, dst) in input.iter().zip(&mut complex_input[..]) {
-        dst.re = src;
-    }
-    c.fft
-        .process(&mut complex_input[..], &mut scratch_output[..]);
+    let mut buf = [Complex::new(0.0, 0.0); FREQ_SIZE];
+    c.fft.forward(input, output, &mut buf[..]);
 
     // In the original RNNoise code, the forward transform is normalized and the inverse
     // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
     let norm = 1.0 / WINDOW_SIZE as f32;
-    for (&src, dst) in scratch_output.iter().zip(output) {
-        *dst = src * norm;
+    for x in &mut output[..] {
+        *x *= norm;
     }
 }
 
-fn inverse_transform(output: &mut [f32], input: &[Complex]) {
-    let mut scratch_input = [Complex::from(0.0); WINDOW_SIZE];
-    let mut complex_output = [Complex::from(0.0); WINDOW_SIZE];
+fn inverse_transform(output: &mut [f32], input: &mut [Complex]) {
     let c = common();
-    for (&src, dst) in input.iter().zip(&mut scratch_input[..]) {
-        *dst = src;
-    }
-    for (&src, dst) in input[1..].iter().zip(scratch_input.iter_mut().rev()) {
-        *dst = src.conj();
-    }
-
-    c.inv_fft
-        .process(&mut scratch_input[..], &mut complex_output[..]);
-    for (&src, dst) in complex_output.iter().zip(output) {
-        *dst = src.re;
-    }
+    let mut buf = [Complex::new(0.0, 0.0); WINDOW_SIZE / 2];
+    c.fft.inverse(input, output, &mut buf[..]);
 }
 
 #[cfg(test)]
