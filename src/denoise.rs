@@ -32,14 +32,15 @@ use crate::{
 /// }
 /// ```
 pub struct DenoiseState {
-    analysis_mem: [f32; FRAME_SIZE],
+    /// This stores some of the previous input. Currently, whenever we get new input we shift this
+    /// backwards and copy the new input at the end. It might be worth investigating a ring buffer.
+    input_mem: Vec<f32>,
     /// This is some sort of ring buffer, storing the last bunch of cepstra.
     cepstral_mem: [[f32; crate::NB_BANDS]; crate::CEPS_MEM],
     /// The index pointing to the most recent cepstrum in `cepstral_mem`. The previous cepstra are
     /// at indices mem_id - 1, mem_id - 1, etc (wrapped appropriately).
     mem_id: usize,
     synthesis_mem: [f32; FRAME_SIZE],
-    pitch_buf: [f32; crate::PITCH_BUF_SIZE],
     last_gain: f32,
     last_period: usize,
     mem_hp_x: [f32; 2],
@@ -54,17 +55,21 @@ impl DenoiseState {
     /// Creates a new `DenoiseState`.
     pub fn new() -> Box<DenoiseState> {
         Box::new(DenoiseState {
-            analysis_mem: [0.0; FRAME_SIZE],
+            input_mem: vec![0.0; FRAME_SIZE.max(PITCH_BUF_SIZE)],
             cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
             mem_id: 0,
             synthesis_mem: [0.0; FRAME_SIZE],
-            pitch_buf: [0.0; PITCH_BUF_SIZE],
             last_gain: 0.0,
             last_period: 0,
             mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
             rnn: crate::rnn::RnnState::new(),
         })
+    }
+
+    // Returns the most recent chunk of input from our internal buffer.
+    fn input(&self, len: usize) -> &[f32] {
+        &self.input_mem[self.input_mem.len().checked_sub(len).unwrap()..]
     }
 
     /// Processes a chunk of samples.
@@ -79,15 +84,14 @@ impl DenoiseState {
     }
 }
 
-fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32], input: &[f32]) {
+fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32]) {
     let mut buf = [0.0; WINDOW_SIZE];
-    for i in 0..FRAME_SIZE {
-        buf[i] = state.analysis_mem[i];
+    for (&src, dst) in state.input(WINDOW_SIZE).iter().zip(&mut buf[..]) {
+        *dst = src;
     }
-    for i in 0..crate::FRAME_SIZE {
-        buf[i + crate::FRAME_SIZE] = input[i];
-        state.analysis_mem[i] = input[i];
-    }
+    // TODO: apply_window is always followed by forward_transform, so we can do this with less
+    // copying. Also, we always copy the input before doing apply_window in place, so it would be
+    // better to have an out-of-place apply_window.
     crate::apply_window(&mut buf[..]);
     crate::forward_transform(x, &buf[..]);
     crate::compute_band_corr(ex, x, x);
@@ -101,26 +105,19 @@ fn compute_frame_features(
     ep: &mut [f32],
     exp: &mut [f32],
     features: &mut [f32],
-    input: &[f32],
 ) -> usize {
     let mut ly = [0.0; NB_BANDS];
+    // p_buf and pitch_buf seem to have disjoint lifetimes, so we only need one.
     let mut p_buf = [0.0; WINDOW_SIZE];
-    // Apparently, PITCH_BUF_SIZE wasn't the best name...
     let mut pitch_buf = [0.0; PITCH_BUF_SIZE / 2];
     let mut tmp = [0.0; NB_BANDS];
     let mut scratch = [0.0; PITCH_MAX_PERIOD + 1];
     let mut scratch2 = [0.0; PITCH_FRAME_SIZE / 4];
     let mut scratch3 = [0.0; PITCH_FRAME_SIZE / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4];
 
-    frame_analysis(state, x, ex, input);
-    for i in 0..(PITCH_BUF_SIZE - FRAME_SIZE) {
-        state.pitch_buf[i] = state.pitch_buf[i + FRAME_SIZE];
-    }
-    for i in 0..FRAME_SIZE {
-        state.pitch_buf[PITCH_BUF_SIZE - FRAME_SIZE + i] = input[i];
-    }
+    frame_analysis(state, x, ex);
 
-    crate::pitch_downsample(&state.pitch_buf[..], &mut pitch_buf);
+    crate::pitch_downsample(state.input(PITCH_BUF_SIZE), &mut pitch_buf);
     let pitch_idx = crate::pitch_search(
         &pitch_buf[(PITCH_MAX_PERIOD / 2)..],
         &pitch_buf,
@@ -144,8 +141,9 @@ fn compute_frame_features(
     state.last_period = pitch_idx;
     state.last_gain = gain;
 
-    for i in 0..WINDOW_SIZE {
-        p_buf[i] = state.pitch_buf[PITCH_BUF_SIZE - WINDOW_SIZE - pitch_idx + i];
+    let pitch_buf = state.input(WINDOW_SIZE + pitch_idx);
+    for (&src, dst) in pitch_buf.iter().zip(&mut p_buf[..]) {
+        *dst = src;
     }
     crate::apply_window(&mut p_buf[..]);
     crate::forward_transform(p, &p_buf[..]);
@@ -299,7 +297,6 @@ fn pitch_filter(
 fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) -> f32 {
     let mut x_freq = [Complex::from(0.0); FREQ_SIZE];
     let mut p = [Complex::from(0.0); WINDOW_SIZE];
-    let mut x_time = [0.0; FRAME_SIZE];
     let mut ex = [0.0; NB_BANDS];
     let mut ep = [0.0; NB_BANDS];
     let mut exp = [0.0; NB_BANDS];
@@ -310,8 +307,13 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
     let b_hp = [-2.0, 1.0];
     let mut vad_prob = [0.0];
 
+    // Shift our internal input buffer and copy the (filtered) input into it.
+    let new_idx = state.input_mem.len() - FRAME_SIZE;
+    for i in 0..new_idx {
+        state.input_mem[i] = state.input_mem[i + FRAME_SIZE];
+    }
     biquad(
-        &mut x_time[..],
+        &mut state.input_mem[new_idx..],
         &mut state.mem_hp_x[..],
         input,
         &b_hp[..],
@@ -325,17 +327,16 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
         &mut ep[..],
         &mut exp[..],
         &mut features[..],
-        &x_time[..],
     );
     if silence == 0 {
         crate::rnn::compute_rnn(&mut state.rnn, &mut g[..], &mut vad_prob[..], &features[..]);
         pitch_filter(
             &mut x_freq[..],
             &mut p[..],
-            &mut ex[..],
-            &mut ep[..],
-            &mut exp[..],
-            &mut g[..],
+            &ex[..],
+            &ep[..],
+            &exp[..],
+            &g[..],
         );
         for i in 0..NB_BANDS {
             g[i] = g[i].max(0.6 * state.lastg[i]);
