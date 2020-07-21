@@ -497,7 +497,7 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32]) {
 }
 
 struct CommonState {
-    half_window: [f32; FRAME_SIZE],
+    window: [f32; WINDOW_SIZE],
     dct_table: [f32; NB_BANDS * NB_BANDS],
     fft: Arc<dyn rustfft::FFT<f32>>,
     inv_fft: Arc<dyn rustfft::FFT<f32>>,
@@ -508,10 +508,11 @@ static COMMON: OnceCell<CommonState> = OnceCell::new();
 fn common() -> &'static CommonState {
     if COMMON.get().is_none() {
         let pi = std::f64::consts::PI;
-        let mut half_window = [0.0; FRAME_SIZE];
+        let mut window = [0.0; WINDOW_SIZE];
         for i in 0..FRAME_SIZE {
             let sin = (0.5 * pi * (i as f64 + 0.5) / FRAME_SIZE as f64).sin();
-            half_window[i] = (0.5 * pi * sin * sin).sin() as f32;
+            window[i] = (0.5 * pi * sin * sin).sin() as f32;
+            window[WINDOW_SIZE - i - 1] = (0.5 * pi * sin * sin).sin() as f32;
         }
 
         let mut dct_table = [0.0; NB_BANDS * NB_BANDS];
@@ -528,7 +529,7 @@ fn common() -> &'static CommonState {
         let fft = rustfft::FFTplanner::new(false).plan_fft(WINDOW_SIZE);
         let inv_fft = rustfft::FFTplanner::new(true).plan_fft(WINDOW_SIZE);
         let _ = COMMON.set(CommonState {
-            half_window,
+            window,
             dct_table,
             fft,
             inv_fft,
@@ -549,11 +550,28 @@ pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
     }
 }
 
-fn apply_window(x: &mut [f32]) {
+fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
+where
+    I: IntoIterator,
+    J: IntoIterator,
+    K: IntoIterator,
+{
+    i.into_iter()
+        .zip(j.into_iter().zip(k))
+        .map(|(x, (y, z))| (x, y, z))
+}
+
+fn apply_window(output: &mut [f32], input: &[f32]) {
     let c = common();
-    for i in 0..FRAME_SIZE {
-        x[i] *= c.half_window[i];
-        x[WINDOW_SIZE - 1 - i] *= c.half_window[i];
+    for (x, &y, &w) in zip3(output, input, &c.window[..]) {
+        *x = y * w;
+    }
+}
+
+fn apply_window_in_place(xs: &mut [f32]) {
+    let c = common();
+    for (x, &w) in xs.iter_mut().zip(&c.window[..]) {
+        *x *= w;
     }
 }
 

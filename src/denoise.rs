@@ -86,13 +86,7 @@ impl DenoiseState {
 
 fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32]) {
     let mut buf = [0.0; WINDOW_SIZE];
-    for (&src, dst) in state.input(WINDOW_SIZE).iter().zip(&mut buf[..]) {
-        *dst = src;
-    }
-    // TODO: apply_window is always followed by forward_transform, so we can do this with less
-    // copying. Also, we always copy the input before doing apply_window in place, so it would be
-    // better to have an out-of-place apply_window.
-    crate::apply_window(&mut buf[..]);
+    crate::apply_window(&mut buf[..], state.input(WINDOW_SIZE));
     crate::forward_transform(x, &buf[..]);
     crate::compute_band_corr(ex, x, x);
 }
@@ -141,11 +135,7 @@ fn compute_frame_features(
     state.last_period = pitch_idx;
     state.last_gain = gain;
 
-    let pitch_buf = state.input(WINDOW_SIZE + pitch_idx);
-    for (&src, dst) in pitch_buf.iter().zip(&mut p_buf[..]) {
-        *dst = src;
-    }
-    crate::apply_window(&mut p_buf[..]);
+    crate::apply_window(&mut p_buf[..], state.input(WINDOW_SIZE + pitch_idx));
     crate::forward_transform(p, &p_buf[..]);
     crate::compute_band_corr(ep, p, p);
     crate::compute_band_corr(exp, x, p);
@@ -234,7 +224,7 @@ fn compute_frame_features(
 fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &[Complex]) {
     let mut x = [0.0; WINDOW_SIZE];
     crate::inverse_transform(&mut x[..], y);
-    crate::apply_window(&mut x[..]);
+    crate::apply_window_in_place(&mut x[..]);
     for i in 0..FRAME_SIZE {
         out[i] = x[i] + state.synthesis_mem[i];
         state.synthesis_mem[i] = x[FRAME_SIZE + i];
