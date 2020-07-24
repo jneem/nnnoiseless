@@ -1,6 +1,6 @@
 use crate::{
     Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES, PITCH_BUF_SIZE,
-    PITCH_FRAME_SIZE, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD, WINDOW_SIZE,
+    WINDOW_SIZE,
 };
 
 /// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
@@ -41,11 +41,11 @@ pub struct DenoiseState {
     /// at indices mem_id - 1, mem_id - 1, etc (wrapped appropriately).
     mem_id: usize,
     synthesis_mem: [f32; FRAME_SIZE],
-    last_gain: f32,
-    last_period: usize,
     mem_hp_x: [f32; 2],
     lastg: [f32; crate::NB_BANDS],
     rnn: crate::rnn::RnnState,
+
+    pitch_finder: crate::pitch::PitchFinder,
 }
 
 impl DenoiseState {
@@ -59,17 +59,22 @@ impl DenoiseState {
             cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
             mem_id: 0,
             synthesis_mem: [0.0; FRAME_SIZE],
-            last_gain: 0.0,
-            last_period: 0,
             mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
             rnn: crate::rnn::RnnState::new(),
+            pitch_finder: crate::pitch::PitchFinder::new(),
         })
     }
 
     // Returns the most recent chunk of input from our internal buffer.
     fn input(&self, len: usize) -> &[f32] {
         &self.input_mem[self.input_mem.len().checked_sub(len).unwrap()..]
+    }
+
+    fn find_pitch(&mut self) -> usize {
+        let input = &self.input_mem[self.input_mem.len().checked_sub(PITCH_BUF_SIZE).unwrap()..];
+        let (pitch, _gain) = self.pitch_finder.process(input);
+        pitch
     }
 
     /// Processes a chunk of samples.
@@ -103,37 +108,11 @@ fn compute_frame_features(
     let mut ly = [0.0; NB_BANDS];
     // p_buf and pitch_buf seem to have disjoint lifetimes, so we only need one.
     let mut p_buf = [0.0; WINDOW_SIZE];
-    let mut pitch_buf = [0.0; PITCH_BUF_SIZE / 2];
     let mut tmp = [0.0; NB_BANDS];
-    let mut scratch = [0.0; PITCH_MAX_PERIOD + 1];
-    let mut scratch2 = [0.0; PITCH_FRAME_SIZE / 4];
-    let mut scratch3 = [0.0; PITCH_FRAME_SIZE / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4];
 
     frame_analysis(state, x, ex);
 
-    crate::pitch_downsample(state.input(PITCH_BUF_SIZE), &mut pitch_buf);
-    let pitch_idx = crate::pitch_search(
-        &pitch_buf[(PITCH_MAX_PERIOD / 2)..],
-        &pitch_buf,
-        PITCH_FRAME_SIZE,
-        PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD,
-        &mut scratch2,
-        &mut scratch3,
-    );
-    let pitch_idx = PITCH_MAX_PERIOD - pitch_idx;
-
-    let (pitch_idx, gain) = crate::remove_doubling(
-        &pitch_buf[..],
-        PITCH_MAX_PERIOD,
-        PITCH_MIN_PERIOD,
-        PITCH_FRAME_SIZE,
-        pitch_idx,
-        state.last_period,
-        state.last_gain,
-        &mut scratch[..],
-    );
-    state.last_period = pitch_idx;
-    state.last_gain = gain;
+    let pitch_idx = state.find_pitch();
 
     crate::apply_window(&mut p_buf[..], state.input(WINDOW_SIZE + pitch_idx));
     crate::forward_transform(p, &mut p_buf[..]);
