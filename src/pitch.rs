@@ -11,6 +11,8 @@ pub(crate) struct PitchFinder {
     scratch: Vec<f32>,
     // Scratch buffer of size PITCH_FRAME_SIZE / 4.
     scratch2: Vec<f32>,
+    // Scratch buffer of length (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2.
+    scratch3: Vec<f32>,
 }
 
 impl PitchFinder {
@@ -23,12 +25,14 @@ impl PitchFinder {
         let pitch_buf = vec![0.0; PITCH_BUF_SIZE / 2];
         let scratch = vec![0.0; PITCH_MAX_PERIOD + 1];
         let scratch2 = vec![0.0; PITCH_FRAME_SIZE / 4];
+        let scratch3 = vec![0.0; (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2];
         PitchFinder {
             last_period: 0,
             last_gain: 0.0,
             pitch_buf,
             scratch,
             scratch2,
+            scratch3,
         }
     }
 
@@ -40,33 +44,183 @@ impl PitchFinder {
     pub(crate) fn process(&mut self, input: &[f32]) -> (usize, f32) {
         pitch_downsample(input, &mut self.pitch_buf);
 
-        let pitch_idx = pitch_search(
-            &self.pitch_buf[(PITCH_MAX_PERIOD / 2)..],
-            &self.pitch_buf,
-            PITCH_FRAME_SIZE,
-            PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD,
-            &mut self.scratch2[..(PITCH_FRAME_SIZE / 4)],
-            &mut self.scratch
-                [..(PITCH_FRAME_SIZE / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4)],
-        );
+        let pitch_idx = self.pitch_search();
         let pitch_idx = PITCH_MAX_PERIOD - pitch_idx;
-
-        let (period, gain) = remove_doubling(
-            &self.pitch_buf[..],
-            PITCH_MAX_PERIOD,
-            PITCH_MIN_PERIOD,
-            PITCH_FRAME_SIZE,
-            pitch_idx,
-            self.last_period,
-            self.last_gain,
-            &mut self.scratch,
-        );
+        let (period, gain) = self.remove_doubling(pitch_idx);
         self.last_period = period;
         self.last_gain = gain;
         (period, gain)
     }
+
+    // Finds the pitch of the signal in self.pitch_buf. Returns the period of the pitch.
+    //
+    // Note that the data in self.pitch_buf is already downsampled by a factor of 2. The return
+    // value is the period of the *original* signal.
+    //
+    // Roughly speaking, this works by taking two adjacent frames of the input and finding the
+    // offset with maximal cross-correlation.
+    fn pitch_search(&mut self) -> usize {
+        let x_lp = &self.pitch_buf[(PITCH_MAX_PERIOD / 2)..];
+        let y = &self.pitch_buf[..];
+        let len = PITCH_FRAME_SIZE;
+        let max_pitch = PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD;
+        let x_lp4 = &mut self.scratch2[..(len / 4)];
+        let y_lp4 = &mut self.scratch[..(len / 4 + max_pitch / 4)];
+        let xcorr = &mut self.scratch3[..];
+
+        // The signal in `self.pitch_buf` was already downsampled by a factor of 2. Downsample it
+        // again.
+        for j in 0..x_lp4.len() {
+            x_lp4[j] = x_lp[2 * j];
+        }
+        for j in 0..y_lp4.len() {
+            y_lp4[j] = y[2 * j];
+        }
+
+        // Use brute-force for the 4x downsampled data.
+        pitch_xcorr(&x_lp4, &y_lp4, &mut xcorr[0..(max_pitch / 4)]);
+        let (best_pitch, second_best_pitch) =
+            find_best_pitch(&xcorr[0..(max_pitch / 4)], &y_lp4, len / 4);
+
+        // Do a finer search on the 2x downsampled data. We still do pitch_search by brute force,
+        // but this time we only compute a few candidate values of the cross-correlation.
+        for i in 0..(max_pitch / 2) {
+            xcorr[i] = 0.0;
+            if (i as isize - 2 * best_pitch as isize).abs() > 2
+                && (i as isize - 2 * second_best_pitch as isize).abs() > 2
+            {
+                continue;
+            }
+            xcorr[i] = inner_prod(&x_lp[..], &y[i..], len / 2).max(-1.0);
+        }
+        let (best_pitch, _) = find_best_pitch(&xcorr, &y, len / 2);
+
+        // Use pseudo-interpolation to get the final pitch for the original signal.
+        let offset: isize = if best_pitch > 0 && best_pitch < (max_pitch / 2) - 1 {
+            let a = xcorr[best_pitch - 1];
+            let b = xcorr[best_pitch];
+            let c = xcorr[best_pitch + 1];
+            if c - a > 0.7 * (b - a) {
+                1
+            } else if a - c > 0.7 * (b - c) {
+                -1
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        (2 * best_pitch as isize - offset) as usize
+    }
+
+    // TODO: document this.
+    fn remove_doubling(&mut self, pitch_idx: usize) -> (usize, f32) {
+        let x = &self.pitch_buf[..];
+
+        // All these quantities get divided by 2 because we're working with downsampled data.
+        let min_period = PITCH_MIN_PERIOD / 2;
+        let max_period = PITCH_MAX_PERIOD / 2;
+        let n = PITCH_FRAME_SIZE / 2;
+        let t0 = (pitch_idx / 2).min(max_period - 1);
+        let prev_period = self.last_period / 2;
+
+        let yy_lookup = &mut self.scratch[..];
+        let mut t = t0;
+
+        // Note that because we can't index with negative numbers, the x in the C code is our
+        // x[max_period..].
+        let xx = inner_prod(&x[max_period..], &x[max_period..], n);
+        let mut xy = inner_prod(&x[max_period..], &x[(max_period - t0)..], n);
+        yy_lookup[0] = xx;
+
+        let mut yy = xx;
+        for i in 1..=max_period {
+            yy += x[max_period - i] * x[max_period - i]
+                - x[max_period + n - i] * x[max_period + n - i];
+            yy_lookup[i] = yy.max(0.0);
+        }
+
+        yy = yy_lookup[t0];
+        let mut best_xy = xy;
+        let mut best_yy = yy;
+
+        let g0 = pitch_gain(xy, xx, yy);
+        let mut g = g0;
+
+        // Look for any pitch at T/k */
+        for k in 2..=15 {
+            let t1 = (2 * t0 + k) / (2 * k);
+            if t1 < min_period {
+                break;
+            }
+            // Look for another strong correlation at t1b
+            let t1b = if k == 2 {
+                if t1 + t0 > max_period {
+                    t0
+                } else {
+                    t0 + t1
+                }
+            } else {
+                (2 * SECOND_CHECK[k] * t0 + k) / (2 * k)
+            };
+            xy = inner_prod(&x[max_period..], &x[(max_period - t1)..], n);
+            let xy2 = inner_prod(&x[max_period..], &x[(max_period - t1b)..], n);
+            xy = (xy + xy2) / 2.0;
+            yy = (yy_lookup[t1] + yy_lookup[t1b]) / 2.0;
+
+            let g1 = pitch_gain(xy, xx, yy);
+            let cont = if (t1 as isize - prev_period as isize).abs() <= 1 {
+                self.last_gain
+            } else if (t1 as isize - prev_period as isize).abs() <= 2 && 5 * k * k < t0 {
+                self.last_gain / 2.0
+            } else {
+                0.0
+            };
+
+            // Bias against very high pitch (very short period) to avoid false-positives due to
+            // short-term correlation.
+            let thresh = if t1 < 3 * min_period {
+                (0.85 * g0 - cont).max(0.4)
+            } else if t1 < 2 * min_period {
+                (0.9 * g0 - cont).max(0.5)
+            } else {
+                (0.7 * g0 - cont).max(0.3)
+            };
+            if g1 > thresh {
+                best_xy = xy;
+                best_yy = yy;
+                t = t1;
+                g = g1;
+            }
+        }
+
+        let best_xy = best_xy.max(0.0);
+        let pg = if best_yy <= best_xy {
+            1.0
+        } else {
+            best_xy / (best_yy + 1.0)
+        };
+
+        let mut xcorr = [0.0; 3];
+        for k in 0..3 {
+            xcorr[k] = inner_prod(&x[max_period..], &x[(max_period - (t + k - 1))..], n);
+        }
+        let offset: isize = if xcorr[2] - xcorr[0] > 0.7 * (xcorr[1] - xcorr[0]) {
+            1
+        } else if xcorr[0] - xcorr[2] > 0.7 * (xcorr[1] - xcorr[2]) {
+            -1
+        } else {
+            0
+        };
+
+        let pg = pg.min(g);
+        let t0 = (2 * t).wrapping_add(offset as usize).max(PITCH_MIN_PERIOD);
+
+        (t0, pg)
+    }
 }
 
+/// Computes the inner product of `xs[..n]` and `ys[..n]`.
 fn inner_prod(xs: &[f32], ys: &[f32], n: usize) -> f32 {
     let mut sum0 = 0.0;
     let mut sum1 = 0.0;
@@ -136,8 +290,8 @@ fn lpc(lpc: &mut [f32], ac: &[f32]) {
     }
 }
 
-// Computes various terms of the cross-correlation between x and y (the number of terms to compute
-// is determined by the size of `xcorr`).
+/// Computes various terms of the cross-correlation between x and y (the number of terms to compute
+/// is determined by the size of `xcorr`).
 fn pitch_xcorr(xs: &[f32], ys: &[f32], xcorr: &mut [f32]) {
     // The un-optimized version of this function is:
     //
@@ -249,65 +403,6 @@ fn find_best_pitch(xcorr: &[f32], ys: &[f32], len: usize) -> (usize, usize) {
     (best_pitch, second_best_pitch)
 }
 
-// TODO: document this. There are some puzzles, commented below.
-fn pitch_search(
-    x_lp: &[f32],
-    y: &[f32],
-    len: usize,
-    max_pitch: usize,
-    x_lp4: &mut [f32],
-    y_lp4: &mut [f32],
-) -> usize {
-    // It seems like only the first half of this is really used? The second half seems to always
-    // stay zero.
-    let mut xcorr = vec![0.0; max_pitch / 2];
-
-    // It says "again", but this was only downsampled once? Also, it's downsampling only the first
-    // half by 2.
-    // Ah, this is called on the result of pitch_downsample.
-    /* Downsample by 2 again */
-    for j in 0..x_lp4.len() {
-        x_lp4[j] = x_lp[2 * j];
-    }
-    for j in 0..y_lp4.len() {
-        y_lp4[j] = y[2 * j];
-    }
-    pitch_xcorr(&x_lp4, &y_lp4, &mut xcorr[0..(max_pitch / 4)]);
-
-    let (best_pitch, second_best_pitch) =
-        find_best_pitch(&xcorr[0..(max_pitch / 4)], &y_lp4, len / 4);
-
-    /* Finer search with 2x decimation */
-    for i in 0..(max_pitch / 2) {
-        xcorr[i] = 0.0;
-        if (i as isize - 2 * best_pitch as isize).abs() > 2
-            && (i as isize - 2 * second_best_pitch as isize).abs() > 2
-        {
-            continue;
-        }
-        xcorr[i] = inner_prod(&x_lp[..], &y[i..], len / 2).max(-1.0);
-    }
-
-    let (best_pitch, _) = find_best_pitch(&xcorr, &y, len / 2);
-
-    /* Refine by pseudo-interpolation */
-    let offset: isize = if best_pitch > 0 && best_pitch < (max_pitch / 2) - 1 {
-        let a = xcorr[best_pitch - 1];
-        let b = xcorr[best_pitch];
-        let c = xcorr[best_pitch + 1];
-        if c - a > 0.7 * (b - a) {
-            1
-        } else if a - c > 0.7 * (b - c) {
-            -1
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    (2 * best_pitch as isize - offset) as usize
-}
-
 fn fir5_in_place(xs: &mut [f32], num: &[f32]) {
     let num0 = num[0];
     let num1 = num[1];
@@ -389,115 +484,3 @@ fn pitch_gain(xy: f32, xx: f32, yy: f32) -> f32 {
 }
 
 const SECOND_CHECK: [usize; 16] = [0, 0, 3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2];
-
-// TODO: document this.
-fn remove_doubling(
-    x: &[f32],
-    mut max_period: usize,
-    mut min_period: usize,
-    mut n: usize,
-    mut t0: usize,
-    mut prev_period: usize,
-    prev_gain: f32,
-    yy_lookup: &mut [f32],
-) -> (usize, f32) {
-    let init_min_period = min_period;
-    min_period /= 2;
-    max_period /= 2;
-    t0 /= 2;
-    prev_period /= 2;
-    n /= 2;
-    t0 = t0.min(max_period - 1);
-
-    let mut t = t0;
-
-    // Note that because we can't index with negative numbers, the x in the C code is our
-    // x[max_period..].
-    let xx = inner_prod(&x[max_period..], &x[max_period..], n);
-    let mut xy = inner_prod(&x[max_period..], &x[(max_period - t0)..], n);
-    yy_lookup[0] = xx;
-
-    let mut yy = xx;
-    for i in 1..=max_period {
-        yy += x[max_period - i] * x[max_period - i] - x[max_period + n - i] * x[max_period + n - i];
-        yy_lookup[i] = yy.max(0.0);
-    }
-
-    yy = yy_lookup[t0];
-    let mut best_xy = xy;
-    let mut best_yy = yy;
-
-    let g0 = pitch_gain(xy, xx, yy);
-    let mut g = g0;
-
-    // Look for any pitch at T/k */
-    for k in 2..=15 {
-        let t1 = (2 * t0 + k) / (2 * k);
-        if t1 < min_period {
-            break;
-        }
-        // Look for another strong correlation at t1b
-        let t1b = if k == 2 {
-            if t1 + t0 > max_period {
-                t0
-            } else {
-                t0 + t1
-            }
-        } else {
-            (2 * SECOND_CHECK[k] * t0 + k) / (2 * k)
-        };
-        xy = inner_prod(&x[max_period..], &x[(max_period - t1)..], n);
-        let xy2 = inner_prod(&x[max_period..], &x[(max_period - t1b)..], n);
-        xy = (xy + xy2) / 2.0;
-        yy = (yy_lookup[t1] + yy_lookup[t1b]) / 2.0;
-
-        let g1 = pitch_gain(xy, xx, yy);
-        let cont = if (t1 as isize - prev_period as isize).abs() <= 1 {
-            prev_gain
-        } else if (t1 as isize - prev_period as isize).abs() <= 2 && 5 * k * k < t0 {
-            prev_gain / 2.0
-        } else {
-            0.0
-        };
-
-        // Bias against very high pitch (very short period) to avoid false-positives due to
-        // short-term correlation.
-        let thresh = if t1 < 3 * min_period {
-            (0.85 * g0 - cont).max(0.4)
-        } else if t1 < 2 * min_period {
-            (0.9 * g0 - cont).max(0.5)
-        } else {
-            (0.7 * g0 - cont).max(0.3)
-        };
-        if g1 > thresh {
-            best_xy = xy;
-            best_yy = yy;
-            t = t1;
-            g = g1;
-        }
-    }
-
-    let best_xy = best_xy.max(0.0);
-    let pg = if best_yy <= best_xy {
-        1.0
-    } else {
-        best_xy / (best_yy + 1.0)
-    };
-
-    let mut xcorr = [0.0; 3];
-    for k in 0..3 {
-        xcorr[k] = inner_prod(&x[max_period..], &x[(max_period - (t + k - 1))..], n);
-    }
-    let offset: isize = if xcorr[2] - xcorr[0] > 0.7 * (xcorr[1] - xcorr[0]) {
-        1
-    } else if xcorr[0] - xcorr[2] > 0.7 * (xcorr[1] - xcorr[2]) {
-        -1
-    } else {
-        0
-    };
-
-    let pg = pg.min(g);
-    let t0 = (2 * t).wrapping_add(offset as usize).max(init_min_period);
-
-    (t0, pg)
-}
