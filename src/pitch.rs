@@ -449,6 +449,8 @@ fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
     let mut lpc_coeffs = [0.0; 4];
     let mut lpc_coeffs2 = [0.0; 5];
 
+    // It would be nice to write this using `windows()`, but unfortunately `windows(3).step_by(2)`
+    // produces nasty assembly. Just as well this isn't a hot loop...
     for i in 1..(x.len() / 2) {
         x_lp[i] = ((x[2 * i - 1] + x[2 * i + 1]) / 2.0 + x[2 * i]) / 2.0;
     }
