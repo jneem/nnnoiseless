@@ -7,10 +7,15 @@ license = "BSD-3-Clause"
 readme = "README.md"
 repository = "https://github.com/jneem/nnnoiseless"
 description = "Audio denoising, derived from Xiph's RNNoise library"
+autobenches = false
+
+[lib]
+bench = false
 
 [[bin]]
 name = "munge"
 path = "src/munge.rs"
+bench = false
 
 [[bench]]
 name = "sin"
