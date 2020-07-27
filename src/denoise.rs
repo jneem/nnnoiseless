@@ -52,9 +52,8 @@ impl DenoiseState {
     /// A `DenoiseState` processes this many samples at a time.
     pub const FRAME_SIZE: usize = FRAME_SIZE;
 
-    /// Creates a new `DenoiseState`.
-    pub fn new() -> Box<DenoiseState> {
-        Box::new(DenoiseState {
+    pub(crate) fn default() -> Self {
+        DenoiseState {
             input_mem: vec![0.0; FRAME_SIZE.max(PITCH_BUF_SIZE)],
             cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
             mem_id: 0,
@@ -63,7 +62,12 @@ impl DenoiseState {
             lastg: [0.0; NB_BANDS],
             rnn: crate::rnn::RnnState::new(),
             pitch_finder: crate::pitch::PitchFinder::new(),
-        })
+        }
+    }
+
+    /// Creates a new `DenoiseState`.
+    pub fn new() -> Box<DenoiseState> {
+        Box::new(Self::default())
     }
 
     // Returns the most recent chunk of input from our internal buffer.
