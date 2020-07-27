@@ -31,6 +31,7 @@ use crate::{
 ///     first = false;
 /// }
 /// ```
+#[derive(Clone)]
 pub struct DenoiseState {
     /// This stores some of the previous input. Currently, whenever we get new input we shift this
     /// backwards and copy the new input at the end. It might be worth investigating a ring buffer.

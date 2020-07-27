@@ -1,5 +1,6 @@
 use crate::{PITCH_BUF_SIZE, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD};
 
+#[derive(Clone)]
 pub(crate) struct PitchFinder {
     last_period: usize,
     last_gain: f32,
