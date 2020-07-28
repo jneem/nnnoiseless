@@ -1,0 +1,15 @@
+header = "// SPDX-License-Identifier: BSD-3-Clause"
+sys_includes = ["stdio.h"]
+no_includes = true
+include_guard = "RNNOISE_H"
+tab_width = 4
+style = "Type"
+language = "C"
+cpp_compat = true
+
+[export]
+exclude = ["FRAME_SIZE"]
+
+[const]
+allow_static_const = false
+allow_constexpr = false

@@ -85,6 +85,7 @@ pub struct GruLayer {
     pub activation: Activation,
 }
 
+#[derive(Clone)]
 pub struct RnnModel {
     pub input_dense_size: usize,
     pub input_dense: DenseLayer,
@@ -100,6 +101,7 @@ pub struct RnnModel {
     pub vad_output: DenseLayer,
 }
 
+#[derive(Clone)]
 pub struct RnnState {
     model: &'static RnnModel,
     vad_gru_state: Vec<f32>,

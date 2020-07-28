@@ -3,7 +3,7 @@
 [![docs]( https://docs.rs/nnnoiseless/badge.svg)](https://docs.rs/nnnoiseless)
 
 `nnnoiseless` is a rust crate for suppressing audio noise. It is a (safe) rust port of
-the [`RNNoise`](https://github.com/xiph/rnnoise) C library, and is based on a recurrent
+the [`RNNoise`][1] C library, and is based on a recurrent
 neural network.
 
 While `nnnoiseless` is meant to be used as a library, a simple command-line
@@ -15,3 +15,15 @@ cargo run --release --example nnnoiseless INPUT.raw OUTPUT.raw
 ```
 
 The output is also a 16-bit raw PCM file.
+
+## C-API
+
+It is possible to install `nnnoiseless` as C-API library, with a [`RNNoise`][1]-compatible header.
+
+``` sh
+# cargo install cargo-c
+# cargo cinstall --destdir /tmp/staging-nnnoiseless
+# sudo cp -a /tmp/staging-nnnoiseless/* /
+```
+
+[1]: https://github.com/xiph/rnnoise
