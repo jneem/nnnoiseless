@@ -178,7 +178,6 @@ fn compute_dense(layer: &DenseLayer, output: &mut [f32], input: &[f32]) {
 fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
     let mut z = [0.0; MAX_NEURONS];
     let mut r = [0.0; MAX_NEURONS];
-    let mut h = [0.0; MAX_NEURONS];
     let m = gru.nb_inputs;
     let n = gru.nb_neurons;
 
@@ -217,48 +216,53 @@ fn compute_gru(gru: &GruLayer, state: &mut [f32], input: &[f32]) {
             Activation::Tanh => tansig_approx(WEIGHTS_SCALE * sum),
             Activation::Relu => relu(WEIGHTS_SCALE * sum),
         };
-        h[i] = z[i] * state[i] + (1.0 - z[i]) * sum;
-    }
-    for i in 0..n {
-        state[i] = h[i];
+        state[i] = z[i] * state[i] + (1.0 - z[i]) * sum;
     }
 }
 
 const INPUT_SIZE: usize = 42;
 
+fn copy(dst: &mut [f32], src: &[f32]) {
+    for (x, y) in dst.iter_mut().zip(src) {
+        *x = *y;
+    }
+}
+
 pub fn compute_rnn(rnn: &mut RnnState, gains: &mut [f32], vad: &mut [f32], input: &[f32]) {
-    let mut dense_out = [0.0; MAX_NEURONS];
-    let mut noise_input = [0.0; MAX_NEURONS * 3];
-    let mut denoise_input = [0.0; MAX_NEURONS * 3];
+    assert_eq!(input.len(), INPUT_SIZE);
+
+    let mut buf = [0.0; MAX_NEURONS * 3];
+    let mut denoise_buf = [0.0; MAX_NEURONS * 3];
     let model = &rnn.model;
 
     let vad_gru_state = &mut rnn.vad_gru_state[..];
     let noise_gru_state = &mut rnn.noise_gru_state[..];
     let denoise_gru_state = &mut rnn.denoise_gru_state[..];
-    compute_dense(&model.input_dense, &mut dense_out, input);
-    compute_gru(&model.vad_gru, vad_gru_state, &dense_out);
+    compute_dense(
+        &model.input_dense,
+        &mut buf[0..model.input_dense_size],
+        input,
+    );
+    compute_gru(
+        &model.vad_gru,
+        vad_gru_state,
+        &buf[0..model.input_dense_size],
+    );
     compute_dense(&model.vad_output, vad, vad_gru_state);
 
-    for i in 0..model.input_dense_size {
-        noise_input[i] = dense_out[i];
-    }
-    for i in 0..model.vad_gru_size {
-        noise_input[i + model.input_dense_size] = vad_gru_state[i];
-    }
-    for i in 0..INPUT_SIZE {
-        noise_input[i + model.input_dense_size + model.vad_gru_size] = input[i];
-    }
-    compute_gru(&model.noise_gru, noise_gru_state, &noise_input);
+    copy(&mut buf[model.input_dense_size..], vad_gru_state);
+    copy(
+        &mut buf[(model.input_dense_size + model.vad_gru_size)..],
+        input,
+    );
+    compute_gru(&model.noise_gru, noise_gru_state, &buf);
 
-    for i in 0..model.vad_gru_size {
-        denoise_input[i] = vad_gru_state[i];
-    }
-    for i in 0..model.noise_gru_size {
-        denoise_input[i + model.vad_gru_size] = noise_gru_state[i];
-    }
-    for i in 0..INPUT_SIZE {
-        denoise_input[i + model.vad_gru_size + model.noise_gru_size] = input[i];
-    }
-    compute_gru(&model.denoise_gru, denoise_gru_state, &denoise_input);
+    copy(&mut denoise_buf, vad_gru_state);
+    copy(&mut denoise_buf[model.vad_gru_size..], noise_gru_state);
+    copy(
+        &mut denoise_buf[(model.vad_gru_size + model.noise_gru_size)..],
+        input,
+    );
+    compute_gru(&model.denoise_gru, denoise_gru_state, &denoise_buf);
     compute_dense(&model.denoise_output, gains, denoise_gru_state);
 }
