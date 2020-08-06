@@ -12,6 +12,7 @@
 //! anyone wants to re-train the model and needs to swap the orders again.
 mod model;
 mod rnn;
+mod util;
 
 use rnn::Activation;
 

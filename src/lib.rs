@@ -8,6 +8,7 @@ mod fft;
 mod model;
 mod pitch;
 mod rnn;
+mod util;
 
 pub use denoise::DenoiseState;
 

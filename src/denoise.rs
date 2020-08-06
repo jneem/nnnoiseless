@@ -229,14 +229,7 @@ fn biquad(ys: &mut [f32], mem: &mut [f32], xs: &[f32], b: &[f32], a: &[f32]) {
     }
 }
 
-fn pitch_filter(
-    x: &mut [Complex],
-    p: &mut [Complex],
-    ex: &[f32],
-    ep: &[f32],
-    exp: &[f32],
-    g: &[f32],
-) {
+fn pitch_filter(x: &mut [Complex], p: &[Complex], ex: &[f32], ep: &[f32], exp: &[f32], g: &[f32]) {
     let mut r = [0.0; NB_BANDS];
     let mut rf = [0.0; FREQ_SIZE];
     for i in 0..NB_BANDS {
@@ -303,15 +296,10 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
         &mut features[..],
     );
     if silence == 0 {
-        crate::rnn::compute_rnn(&mut state.rnn, &mut g[..], &mut vad_prob[..], &features[..]);
-        pitch_filter(
-            &mut x_freq[..],
-            &mut p[..],
-            &ex[..],
-            &ep[..],
-            &exp[..],
-            &g[..],
-        );
+        state
+            .rnn
+            .compute(&mut g[..], &mut vad_prob[..], &features[..]);
+        pitch_filter(&mut x_freq[..], &p[..], &ex[..], &ep[..], &exp[..], &g[..]);
         for i in 0..NB_BANDS {
             g[i] = g[i].max(0.6 * state.lastg[i]);
             state.lastg[i] = g[i];
