@@ -84,7 +84,11 @@ impl DenoiseState {
 
     /// Processes a chunk of samples.
     ///
-    /// Both `output` and `input` should be slices of length `DenoiseState::FRAME_SIZE`.
+    /// Both `output` and `input` should be slices of length `DenoiseState::FRAME_SIZE`, and they
+    /// are assumed to be in 16-bit, 48kHz signed PCM format. Note that although the input and
+    /// output are `f32`s, they are supposed to come from 16-bit integers. In particular, they
+    /// should be in the range `[-32768.0, 32767.0]` instead of the range `[-1.0, 1.0]` which
+    /// is more common for floating-point PCM.
     ///
     /// The current output of `process_frame` depends on the current input, but also on the
     /// preceding inputs. Because of this, you might prefer to discard the very first output; it
