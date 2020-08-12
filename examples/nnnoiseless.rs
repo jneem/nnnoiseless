@@ -9,7 +9,7 @@ use dasp_interpolate::{sinc::Sinc, Interpolator};
 use dasp_ring_buffer::Fixed;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
-use nnnoiseless::DenoiseState;
+use nnnoiseless::{DenoiseState, RnnModel};
 
 const FRAME_SIZE: usize = DenoiseState::FRAME_SIZE;
 
@@ -260,6 +260,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .help("for raw input, the number of channels (defaults to 1)")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("model")
+                .long("model")
+                .help("path to a custom model file")
+                .takes_value(true),
+        )
         .get_matches();
 
     let in_name = matches.value_of("INPUT").unwrap();
@@ -313,11 +319,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
+    let model = if let Some(model_path) = matches.value_of("model") {
+        RnnModel::from_read(BufReader::new(
+            File::open(model_path).context("Failed to open model file")?,
+        ))
+        .context("Failed to read model file")?
+    } else {
+        RnnModel::default()
+    };
     let channels = channels as usize;
     let mut in_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
     let mut out_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
     let mut out_buf = vec![0.0; FRAME_SIZE * channels];
-    let mut states = vec![DenoiseState::new(); channels];
+    let mut states = vec![DenoiseState::with_model(&model); channels];
     let mut first = true;
     'outer: loop {
         for i in 0..FRAME_SIZE {

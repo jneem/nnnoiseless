@@ -1,3 +1,10 @@
+#![deny(missing_docs)]
+
+//! `nnnoiseless` is a crate for removing noise from audio. The main entry point is
+//! [`DenoiseState`].
+//!
+//! [`DenoiseState`]: struct.DenoiseState.html
+
 use once_cell::sync::OnceCell;
 
 #[cfg(any(cargo_c, feature = "capi"))]
@@ -11,6 +18,7 @@ mod rnn;
 mod util;
 
 pub use denoise::DenoiseState;
+pub use rnn::RnnModel;
 
 pub(crate) const FRAME_SIZE_SHIFT: usize = 2;
 pub(crate) const FRAME_SIZE: usize = 120 << FRAME_SIZE_SHIFT;

@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use crate::{
-    Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES, PITCH_BUF_SIZE,
-    WINDOW_SIZE,
+    Complex, RnnModel, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
+    PITCH_BUF_SIZE, WINDOW_SIZE,
 };
 
 /// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
@@ -32,7 +34,7 @@ use crate::{
 /// }
 /// ```
 #[derive(Clone)]
-pub struct DenoiseState {
+pub struct DenoiseState<'model> {
     /// This stores some of the previous input. Currently, whenever we get new input we shift this
     /// backwards and copy the new input at the end. It might be worth investigating a ring buffer.
     input_mem: Vec<f32>,
@@ -44,16 +46,44 @@ pub struct DenoiseState {
     synthesis_mem: [f32; FRAME_SIZE],
     mem_hp_x: [f32; 2],
     lastg: [f32; crate::NB_BANDS],
-    rnn: crate::rnn::RnnState,
+    rnn: crate::rnn::RnnState<'model>,
 
     pitch_finder: crate::pitch::PitchFinder,
 }
 
-impl DenoiseState {
+impl DenoiseState<'static> {
     /// A `DenoiseState` processes this many samples at a time.
     pub const FRAME_SIZE: usize = FRAME_SIZE;
 
     pub(crate) fn default() -> Self {
+        DenoiseState::from_model_owned(Cow::Owned(RnnModel::default()))
+    }
+
+    /// Creates a new `DenoiseState`.
+    pub fn new() -> Box<DenoiseState<'static>> {
+        Box::new(Self::default())
+    }
+
+    /// Creates a new `DenoiseState` owning a custom model.
+    ///
+    /// The main difference between this method and `DenoiseState::with_model` is that here
+    /// `DenoiseState` will own the model; this might be more convenient.
+    pub fn from_model(model: RnnModel) -> Box<DenoiseState<'static>> {
+        Box::new(DenoiseState::from_model_owned(Cow::Owned(model)))
+    }
+}
+
+impl<'model> DenoiseState<'model> {
+    /// Creates a new `DenoiseState` using a custom model.
+    ///
+    /// The main difference between this method and `DenoiseState::from_model` is that here
+    /// `DenoiseState` will borrow the model; this might create some lifetime-related pain, but
+    /// it means that the same model can be shared between multiple `DenoiseState`s.
+    pub fn with_model(model: &'model RnnModel) -> Box<DenoiseState<'model>> {
+        Box::new(DenoiseState::from_model_owned(Cow::Borrowed(model)))
+    }
+
+    fn from_model_owned(model: Cow<'model, RnnModel>) -> DenoiseState<'model> {
         DenoiseState {
             input_mem: vec![0.0; FRAME_SIZE.max(PITCH_BUF_SIZE)],
             cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
@@ -61,14 +91,9 @@ impl DenoiseState {
             synthesis_mem: [0.0; FRAME_SIZE],
             mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
-            rnn: crate::rnn::RnnState::new(),
+            rnn: crate::rnn::RnnState::new(model),
             pitch_finder: crate::pitch::PitchFinder::new(),
         }
-    }
-
-    /// Creates a new `DenoiseState`.
-    pub fn new() -> Box<DenoiseState> {
-        Box::new(Self::default())
     }
 
     // Returns the most recent chunk of input from our internal buffer.

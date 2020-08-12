@@ -48,64 +48,30 @@ fn print_array(name: String, data: &[i8]) {
 }
 
 fn reorder_gru_layer(layer: &rnn::GruLayer, prefix: &'static str) {
-    let weights = reorder_weights(layer.nb_inputs, 3 * layer.nb_neurons, layer.input_weights);
+    let weights = reorder_weights(layer.nb_inputs, 3 * layer.nb_neurons, &layer.input_weights);
     let recurrent = reorder_weights(
         layer.nb_neurons,
         3 * layer.nb_neurons,
-        layer.recurrent_weights,
+        &layer.recurrent_weights,
     );
 
-    print_array(format!("{}_BIAS", prefix), layer.bias);
+    print_array(format!("{}_BIAS", prefix), &layer.bias);
     print_array(format!("{}_WEIGHTS", prefix), &weights);
     print_array(format!("{}_RECURRENT_WEIGHTS", prefix), &recurrent);
-    println!(
-        "static {}: GruLayer = GruLayer {{
-        bias: &{}_BIAS,
-        input_weights: &{}_WEIGHTS,
-        recurrent_weights: &{}_RECURRENT_WEIGHTS,
-        nb_inputs: {},
-        nb_neurons: {},
-        activation: {},
-    }};",
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        layer.nb_inputs,
-        layer.nb_neurons,
-        act_string(layer.activation)
-    );
 }
 
 fn reorder_dense_layer(layer: &rnn::DenseLayer, prefix: &'static str) {
-    let weights = reorder_weights(layer.nb_inputs, layer.nb_neurons, layer.input_weights);
-    print_array(format!("{}_BIAS", prefix), layer.bias);
+    let weights = reorder_weights(layer.nb_inputs, layer.nb_neurons, &layer.input_weights);
+    print_array(format!("{}_BIAS", prefix), &layer.bias);
     print_array(format!("{}_WEIGHTS", prefix), &weights);
-    println!(
-        "static {}: DenseLayer = DenseLayer {{
-        bias: &{}_BIAS,
-        input_weights: &{}_WEIGHTS,
-        nb_inputs: {},
-        nb_neurons: {},
-        activation: {},
-    }};",
-        prefix,
-        prefix,
-        prefix,
-        layer.nb_inputs,
-        layer.nb_neurons,
-        act_string(layer.activation)
-    );
 }
 
 fn main() {
-    let m = &model::MODEL;
+    let m = rnn::RnnModel::default();
     println!("
         // This file was automatically generated from a Keras model, and then manually ported to rust.
         // Then the ordering of the weights was changed with `munge.rs`.
         // TODO: support generating this file in rust direction.
-
-        use crate::rnn::{{Activation, DenseLayer, GruLayer, RnnModel}};
         ");
     reorder_dense_layer(&m.input_dense, "INPUT_DENSE");
     reorder_gru_layer(&m.vad_gru, "VAD_GRU");
@@ -113,22 +79,4 @@ fn main() {
     reorder_gru_layer(&m.denoise_gru, "DENOISE_GRU");
     reorder_dense_layer(&m.denoise_output, "DENOISE_OUTPUT");
     reorder_dense_layer(&m.vad_output, "VAD_OUTPUT");
-
-    println!(
-        "pub static MODEL: RnnModel = RnnModel {{
-    input_dense_size: 24,
-    input_dense: INPUT_DENSE,
-    vad_gru_size: 24,
-    vad_gru: VAD_GRU,
-    noise_gru_size: 48,
-    noise_gru: NOISE_GRU,
-    denoise_gru_size: 96,
-    denoise_gru: DENOISE_GRU,
-    denoise_output_size: 22,
-    denoise_output: DENOISE_OUTPUT,
-    vad_output_size: 1,
-    vad_output: VAD_OUTPUT,
-    }};
-    "
-    );
 }
