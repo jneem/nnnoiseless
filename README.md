@@ -7,14 +7,12 @@ the [`RNNoise`][1] C library, and is based on a recurrent
 neural network.
 
 While `nnnoiseless` is meant to be used as a library, a simple command-line
-tool is provided as an example. It operates on RAW 16-bit little-endian mono
-PCM files sampled at 48 kHz. It can be used as:
+tool is provided as an example. It operates on WAV files or RAW 16-bit little-endian
+PCM files. It can be used as:
 
 ```
-cargo run --release --example nnnoiseless INPUT.raw OUTPUT.raw
+cargo run --release --example nnnoiseless INPUT.wav OUTPUT.wav
 ```
-
-The output is also a 16-bit raw PCM file.
 
 ## C-API
 

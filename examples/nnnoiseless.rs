@@ -3,93 +3,137 @@ use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Context, Error};
+use anyhow::{anyhow, Context, Error};
 use clap::{crate_version, App, Arg};
-use dasp_interpolate::sinc::Sinc;
+use dasp_interpolate::{sinc::Sinc, Interpolator};
 use dasp_ring_buffer::Fixed;
-use dasp_signal::{interpolate::Converter, Signal};
-use hound::{SampleFormat, WavIntoSamples, WavReader, WavSpec, WavWriter};
-use itertools::Itertools;
+use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
 use nnnoiseless::DenoiseState;
 
 const FRAME_SIZE: usize = DenoiseState::FRAME_SIZE;
 
-struct RawReadSignal<R: Read> {
-    bytes: itertools::Tuples<std::io::Bytes<R>, (std::io::Result<u8>, std::io::Result<u8>)>,
-    finished: bool,
-}
+trait ReadSample {
+    fn next_sample(&mut self) -> Result<Option<&[f32]>, Error>;
+    fn channels(&self) -> usize;
 
-impl<R: Read> RawReadSignal<R> {
-    fn new(r: R) -> Self {
-        RawReadSignal {
-            bytes: r.bytes().tuples(),
-            finished: false,
+    fn resampled(self, ratio: f64) -> Resample<Self>
+    where
+        Self: Sized,
+    {
+        Resample {
+            sinc: (0..self.channels())
+                .map(|_| Sinc::new(Fixed::from([0.0; 16])))
+                .collect(),
+            buf: vec![0.0; self.channels()],
+            ratio,
+            pos: 0.0,
+            read: self,
         }
     }
 }
 
-struct WavReadIntSignal<R> {
-    bits_per_sample: u16,
-    finished: bool,
-    samples: WavIntoSamples<R, i32>,
+// TODO: support either endianness
+struct RawSampleIter<R: Read> {
+    bytes: std::io::Bytes<R>,
 }
 
-impl<R: Read> Signal for RawReadSignal<R> {
-    type Frame = f32;
-    fn next(&mut self) -> f32 {
-        if self.is_exhausted() {
-            return 0.0;
-        }
+struct Resample<RS: ReadSample> {
+    sinc: Vec<Sinc<[f32; 16]>>,
+    buf: Vec<f32>,
+    ratio: f64,
+    pos: f64,
+    read: RS,
+}
 
+struct IterReadSample<I> {
+    samples: I,
+    buf: Vec<f32>,
+}
+
+impl<I: Iterator<Item = Result<f32, Error>>> IterReadSample<I> {
+    fn new(iter: I, channels: usize) -> IterReadSample<I> {
+        IterReadSample {
+            samples: iter,
+            buf: vec![0.0; channels],
+        }
+    }
+}
+
+impl<R: Read> Iterator for RawSampleIter<R> {
+    type Item = Result<f32, Error>;
+
+    fn next(&mut self) -> Option<Result<f32, Error>> {
         match self.bytes.next() {
-            None => {
-                self.finished = true;
-                0.0
-            }
-            Some((Err(_), _)) | Some((_, Err(_))) => {
-                eprintln!("Encountered an error while reading the input file; the output might be truncated");
-                self.finished = true;
-                0.0
-            }
-            Some((Ok(x), Ok(y))) => i16::from_le_bytes([x, y]) as f32,
-        }
-    }
-
-    fn is_exhausted(&self) -> bool {
-        self.finished
-    }
-}
-
-impl<R: Read> Signal for WavReadIntSignal<R> {
-    type Frame = f32;
-    fn next(&mut self) -> f32 {
-        if self.finished {
-            return 0.0;
-        }
-        match self.samples.next() {
-            Some(Ok(x)) => (x >> (32 - self.bits_per_sample)) as f32,
-            Some(Err(_)) => {
-                eprintln!("Encountered an error while reading the input file; the output might be truncated");
-                self.finished = true;
-                0.0
-            }
-            None => {
-                self.finished = true;
-                0.0
-            }
+            None => None,
+            Some(Err(e)) => Some(Err(e.into())),
+            Some(Ok(a)) => match self.bytes.next() {
+                None => Some(Err(anyhow!(
+                    "Unexpected end of input (expected an even number of bytes)"
+                ))),
+                Some(Err(e)) => Some(Err(e.into())),
+                Some(Ok(b)) => Some(Ok(i16::from_le_bytes([a, b]) as f32)),
+            },
         }
     }
 }
 
-trait FrameReader {
-    fn read_frame(&mut self, buf: &mut [f32]);
-    fn finished(&self) -> bool;
+impl<I: Iterator<Item = Result<f32, Error>>> ReadSample for IterReadSample<I> {
+    fn next_sample(&mut self) -> Result<Option<&[f32]>, Error> {
+        for (i, sample) in self.buf.iter_mut().enumerate() {
+            match self.samples.next() {
+                None => {
+                    if i == 0 {
+                        return Ok(None);
+                    } else {
+                        return Err(anyhow!(
+                            "Unexpected end of input (expected a multiple of {} samples)",
+                            self.buf.len()
+                        ));
+                    }
+                }
+                Some(Err(e)) => return Err(e),
+                Some(Ok(x)) => *sample = x,
+            }
+        }
+        Ok(Some(&self.buf[..]))
+    }
+
+    fn channels(&self) -> usize {
+        self.buf.len()
+    }
+}
+
+impl<RS: ReadSample> ReadSample for Resample<RS> {
+    fn next_sample(&mut self) -> Result<Option<&[f32]>, Error> {
+        self.pos += self.ratio;
+        while self.pos >= 1.0 {
+            self.pos -= 1.0;
+
+            if let Some(buf) = self.read.next_sample()? {
+                for (s, &x) in self.sinc.iter_mut().zip(buf) {
+                    s.next_source_frame(x);
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+
+        for (s, x) in self.sinc.iter().zip(&mut self.buf) {
+            *x = s.interpolate(self.pos);
+        }
+
+        Ok(Some(&self.buf[..]))
+    }
+
+    fn channels(&self) -> usize {
+        self.read.channels()
+    }
 }
 
 trait FrameWriter {
-    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Box<dyn std::error::Error>>;
-    fn finalize(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Error>;
+    fn finalize(&mut self) -> Result<(), Error>;
 }
 
 struct RawFrameWriter<W: Write> {
@@ -99,11 +143,10 @@ struct RawFrameWriter<W: Write> {
 
 struct WavFrameWriter<W: Write + Seek> {
     writer: WavWriter<W>,
-    buf: Vec<i16>,
 }
 
 impl<W: Write> FrameWriter for RawFrameWriter<W> {
-    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Error> {
         assert_eq!(buf.len() * 2, self.buf.len());
         for (dst, src) in self.buf.chunks_mut(2).zip(buf) {
             let bytes =
@@ -111,88 +154,76 @@ impl<W: Write> FrameWriter for RawFrameWriter<W> {
             dst[0] = bytes[0];
             dst[1] = bytes[1];
         }
-        self.writer
-            .write_all(&self.buf[..])
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        self.writer.write_all(&self.buf[..]).map_err(|e| e.into())
     }
 
-    fn finalize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: maybe should wrap around File instead of Write, to catch errors on close
+    fn finalize(&mut self) -> Result<(), Error> {
+        self.writer.flush()?;
         Ok(())
     }
 }
 
 impl<W: Write + Seek> FrameWriter for WavFrameWriter<W> {
-    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(buf.len(), self.buf.len());
-        for (dst, src) in self.buf.iter_mut().zip(buf) {
-            *dst = src.max(i16::MIN as f32).min(i16::MAX as f32).round() as i16;
+    fn write_frame(&mut self, buf: &[f32]) -> Result<(), Error> {
+        let mut w = self.writer.get_i16_writer(buf.len() as u32);
+        for &x in buf {
+            w.write_sample(x.max(i16::MIN as f32).min(i16::MAX as f32).round() as i16);
         }
-        let mut w = self.writer.get_i16_writer(self.buf.len() as u32);
-        for &s in &self.buf {
-            w.write_sample(s);
-        }
-        w.flush()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        w.flush().map_err(|e| e.into())
     }
 
-    fn finalize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.writer
-            .flush()
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    fn finalize(&mut self) -> Result<(), Error> {
+        self.writer.flush().map_err(|e| e.into())
     }
 }
 
-struct SignalFrameReader<S: Signal> {
-    //signal: Converter<S, Sinc<[f32; 16]>>,
-    signal: S,
+fn raw_samples<R: Read + 'static>(r: R, channels: usize, sample_rate: f64) -> Box<dyn ReadSample> {
+    let raw = IterReadSample::new(RawSampleIter { bytes: r.bytes() }, channels);
+
+    if sample_rate != 48_000.0 {
+        Box::new(raw.resampled(sample_rate / 48_000.0))
+    } else {
+        Box::new(raw)
+    }
 }
 
-impl<S: Signal<Frame = f32>> FrameReader for SignalFrameReader<S> {
-    fn read_frame(&mut self, buf: &mut [f32]) {
-        for y in buf {
-            *y = self.signal.next();
+fn wav_samples<R: Read + 'static>(wav: WavReader<R>) -> Box<dyn ReadSample> {
+    let sample_rate = wav.spec().sample_rate as f64;
+    let channels = wav.spec().channels as usize;
+    match wav.spec().sample_format {
+        SampleFormat::Int => {
+            let bits_per_sample = wav.spec().bits_per_sample;
+            assert!(bits_per_sample <= 32);
+
+            let iter = wav.into_samples::<i32>().map(move |s| {
+                s.map(|s| {
+                    if bits_per_sample < 16 {
+                        (s << (16 - bits_per_sample)) as f32
+                    } else {
+                        (s >> (bits_per_sample - 16)) as f32
+                    }
+                })
+                .map_err(|e| e.into())
+            });
+
+            let read_sample = IterReadSample::new(iter, channels);
+            if sample_rate != 48_000.0 {
+                Box::new(read_sample.resampled(sample_rate / 48_000.0))
+            } else {
+                Box::new(read_sample)
+            }
         }
-    }
+        SampleFormat::Float => {
+            let iter = wav
+                .into_samples::<f32>()
+                .map(|s| s.map(|s| s * 32767.0).map_err(|e| e.into()));
 
-    fn finished(&self) -> bool {
-        self.signal.is_exhausted()
-    }
-}
-
-impl<R: Read> SignalFrameReader<WavReadIntSignal<R>> {
-    fn from_wav_reader(wav: WavReader<R>) -> Self {
-        assert_eq!(wav.spec().sample_format, hound::SampleFormat::Int);
-
-        let sample_rate = wav.spec().sample_rate;
-        let s = WavReadIntSignal {
-            bits_per_sample: wav.spec().bits_per_sample,
-            finished: false,
-            samples: wav.into_samples(),
-        };
-        SignalFrameReader {
-            signal: todo!(),
-            /*
-            signal: s.from_hz_to_hz(
-                Sinc::new(Fixed::from([0.0; 16])),
-                sample_rate as f64,
-                48_000.0,
-            ),
-            */
-        }
-    }
-}
-
-impl<R: Read> SignalFrameReader<RawReadSignal<R>> {
-    fn from_raw(r: R, sample_rate: f64) -> Self {
-        SignalFrameReader {
-            signal: RawReadSignal::new(r), /*
-                                           signal: RawReadSignal::new(r).from_hz_to_hz(
-                                               Sinc::new(Fixed::from([0.0; 16])),
-                                               sample_rate,
-                                               48_000.0,
-                                           ),
-                                           */
+            let read_sample = IterReadSample::new(iter, channels);
+            if sample_rate != 48_000.0 {
+                Box::new(read_sample.resampled(sample_rate / 48_000.0))
+            } else {
+                Box::new(read_sample)
+            }
         }
     }
 }
@@ -220,7 +251,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(
             Arg::with_name("sample-rate")
                 .long("sample-rate")
-                .help("sample rate of the input (defaults to 48kHz for raw input)")
+                .help("for raw input, the sample rate of the input (defaults to 48kHz)")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("channels")
+                .long("channels")
+                .help("for raw input, the number of channels (defaults to 1)")
                 .takes_value(true),
         )
         .get_matches();
@@ -240,37 +277,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_wav =
         matches.is_present("wav-out") || Path::new(out_name).extension() == Some("wav".as_ref());
 
-    let mut state = DenoiseState::new();
-    let mut in_buf = [0.0; FRAME_SIZE];
-    let mut out_buf = [0.0; FRAME_SIZE];
-    let mut first = true;
-
-    let mut frame_reader: Box<dyn FrameReader> = if in_wav {
+    let (mut samples, channels) = if in_wav {
         let wav_reader = WavReader::new(in_file)?;
-        match wav_reader.spec().sample_format {
-            SampleFormat::Int => Box::new(SignalFrameReader::from_wav_reader(wav_reader)),
-            SampleFormat::Float => unimplemented!(),
-        }
+        let channels = wav_reader.spec().channels;
+        (wav_samples(wav_reader), channels)
     } else {
+        // TODO: report parse errors
         let sample_rate = matches
             .value_of("sample-rate")
             .and_then(|s| f64::from_str(s).ok())
             .unwrap_or(48_000.0);
-        Box::new(SignalFrameReader::from_raw(in_file, sample_rate))
+        let channels = matches
+            .value_of("channels")
+            .and_then(|s| u16::from_str(s).ok())
+            .unwrap_or(1);
+        (
+            raw_samples(in_file, channels as usize, sample_rate),
+            channels,
+        )
     };
 
     let mut frame_writer: Box<dyn FrameWriter> = if out_wav {
         let spec = WavSpec {
-            channels: 1,
+            channels,
             sample_rate: 48_000,
             bits_per_sample: 16,
             sample_format: SampleFormat::Int,
         };
         let writer = WavWriter::new(out_file, spec)?;
-        Box::new(WavFrameWriter {
-            writer,
-            buf: vec![0; FRAME_SIZE],
-        })
+        Box::new(WavFrameWriter { writer })
     } else {
         Box::new(RawFrameWriter {
             writer: out_file,
@@ -278,10 +313,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
-    while !frame_reader.finished() {
-        frame_reader.read_frame(&mut in_buf);
-        state.process_frame(&mut out_buf[..], &in_buf[..]);
+    let channels = channels as usize;
+    let mut in_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
+    let mut out_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
+    let mut out_buf = vec![0.0; FRAME_SIZE * channels];
+    let mut states = vec![DenoiseState::new(); channels];
+    let mut first = true;
+    'outer: loop {
+        for i in 0..FRAME_SIZE {
+            if let Some(buf) = samples.next_sample()? {
+                for j in 0..channels {
+                    in_bufs[j][i] = buf[j];
+                }
+            } else {
+                break 'outer;
+            }
+        }
+
+        for j in 0..channels {
+            states[j].process_frame(&mut out_bufs[j], &in_bufs[j]);
+        }
         if !first {
+            for i in 0..FRAME_SIZE {
+                for j in 0..channels {
+                    out_buf[i * channels + j] = out_bufs[j][i];
+                }
+            }
             frame_writer.write_frame(&out_buf[..])?;
         }
         first = false;
