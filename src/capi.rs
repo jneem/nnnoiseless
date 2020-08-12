@@ -1,22 +1,15 @@
+use std::borrow::Cow;
 use std::boxed::Box;
+use std::fs::File;
+use std::io::BufReader;
 use std::os::raw::{c_float, c_int};
 
 use libc::FILE;
 
-pub struct DenoiseState(crate::DenoiseState);
+#[repr(transparent)]
+pub struct DenoiseState(crate::DenoiseState<'static>);
 
-impl Default for DenoiseState {
-    fn default() -> Self {
-        DenoiseState(crate::DenoiseState::default())
-    }
-}
-
-impl DenoiseState {
-    fn boxed() -> Box<DenoiseState> {
-        Box::new(DenoiseState::default())
-    }
-}
-
+#[repr(transparent)]
 pub struct RNNModel(crate::rnn::RnnModel);
 
 /// Return the number of samples processed at time
@@ -40,13 +33,13 @@ pub unsafe extern "C" fn rnnoise_get_size() -> c_int {
 /// It should be avoided, use directly `rnnoise_create`
 #[no_mangle]
 pub unsafe extern "C" fn rnnoise_init(st: *mut DenoiseState, model: *mut RNNModel) -> c_int {
-    let state = DenoiseState::default();
+    let state = if model.is_null() {
+        crate::DenoiseState::default()
+    } else {
+        crate::DenoiseState::from_model_owned(Cow::Borrowed(&*(model as *mut crate::RnnModel)))
+    };
 
-    if !model.is_null() {
-        todo!("Custom RnnModel model");
-    }
-
-    *st = state;
+    *st = DenoiseState(state);
 
     0
 }
@@ -56,11 +49,13 @@ pub unsafe extern "C" fn rnnoise_init(st: *mut DenoiseState, model: *mut RNNMode
 /// Use `rnnoise_destroy` to deallocate it
 #[no_mangle]
 pub unsafe extern "C" fn rnnoise_create(model: *mut RNNModel) -> *mut DenoiseState {
-    if !model.is_null() {
-        todo!("Custom RnnModel model");
-    }
+    let state = if model.is_null() {
+        crate::DenoiseState::default()
+    } else {
+        crate::DenoiseState::from_model_owned(Cow::Borrowed(&*(model as *mut crate::RnnModel)))
+    };
 
-    Box::into_raw(DenoiseState::boxed())
+    Box::into_raw(Box::new(DenoiseState(state)))
 }
 
 /// Deallocate and destroy a DenoiseState
@@ -91,13 +86,20 @@ pub unsafe extern "C" fn rnnoise_process_frame(
     state.0.process_frame(output, input)
 }
 
-/// Load a Custom Model from file
-///
-/// TODO: unimplemented
+/// Load a custom model from a file.
 #[no_mangle]
 pub unsafe extern "C" fn rnnoise_model_from_file(file: *mut FILE) -> *mut RNNModel {
-    let _ = file;
-    todo!("Custom Model")
+    use libc::{dup, fclose, fileno};
+    use std::os::unix::io::FromRawFd;
+
+    let fd = dup(fileno(file));
+    fclose(file);
+
+    let file = File::from_raw_fd(fd);
+    match crate::RnnModel::from_read(BufReader::new(file)) {
+        Ok(model) => Box::into_raw(Box::new(RNNModel(model))),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// Free a Custom Model
@@ -105,5 +107,5 @@ pub unsafe extern "C" fn rnnoise_model_from_file(file: *mut FILE) -> *mut RNNMod
 /// See `rnnoise_model_from_file`
 #[no_mangle]
 pub unsafe extern "C" fn rnnoise_model_free(model: *mut RNNModel) {
-    let _ = std::sync::Arc::from_raw(model);
+    let _ = Box::from_raw(model);
 }

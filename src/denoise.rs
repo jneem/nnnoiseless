@@ -83,7 +83,7 @@ impl<'model> DenoiseState<'model> {
         Box::new(DenoiseState::from_model_owned(Cow::Borrowed(model)))
     }
 
-    fn from_model_owned(model: Cow<'model, RnnModel>) -> DenoiseState<'model> {
+    pub(crate) fn from_model_owned(model: Cow<'model, RnnModel>) -> DenoiseState<'model> {
         DenoiseState {
             input_mem: vec![0.0; FRAME_SIZE.max(PITCH_BUF_SIZE)],
             cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
