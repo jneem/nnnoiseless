@@ -8,11 +8,13 @@ neural network.
 
 While `nnnoiseless` is meant to be used as a library, a simple command-line
 tool is provided as an example. It operates on WAV files or RAW 16-bit little-endian
-PCM files. It can be used as:
+PCM files. Run
 
 ```
-cargo run --release --example nnnoiseless INPUT.wav OUTPUT.wav
+cargo install nnnoiseless
 ```
+
+to install it.
 
 ## Safety
 
