@@ -246,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "if set, the input is a wav file (default is to detect wav files by their filename)",
         ))
         .arg(Arg::with_name("wav-out").long("wav-out").help(
-            "if set, the output is a wav file (default is to detect wav files by their filename",
+            "if set, the output is a wav file (default is to detect wav files by their filename)",
         ))
         .arg(
             Arg::with_name("sample-rate")
