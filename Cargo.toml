@@ -8,6 +8,7 @@ readme = "README.md"
 repository = "https://github.com/jneem/nnnoiseless"
 description = "Audio denoising, derived from Xiph's RNNoise library"
 autobenches = false
+exclude = [ "tests/*.raw" ]
 
 [features]
 default = ["bin"]
