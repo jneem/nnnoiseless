@@ -191,8 +191,8 @@ mod tests {
 
     #[test]
     fn compare_to_reference() {
-        let reference_input = to_f32(include_bytes!("../tests/testing.raw"));
-        let reference_output = to_i16(include_bytes!("../tests/reference_output.raw"));
+        let reference_input = to_f32(include_bytes!("../test_data/testing.raw"));
+        let reference_output = to_i16(include_bytes!("../test_data/reference_output.raw"));
         let mut output = Vec::new();
         let mut out_buf = [0.0; FRAME_SIZE];
         let mut state = DenoiseState::new();
