@@ -6,10 +6,8 @@ use std::os::raw::{c_float, c_int};
 
 use libc::FILE;
 
-#[repr(transparent)]
 pub struct DenoiseState(crate::DenoiseState<'static>);
 
-#[repr(transparent)]
 pub struct RNNModel(crate::rnn::RnnModel);
 
 /// Return the number of samples processed at time
