@@ -17,3 +17,17 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Install cargo-c
+      env:
+        LINK: https://github.com/lu-zero/cargo-c/releases/download
+        CARGO_C_VERSION: 0.6.10
+      run: |
+        curl -L "$LINK/v$CARGO_C_VERSION/cargo-c-linux.tar.gz" |
+        tar xz -C $HOME/.cargo/bin
+    - name: Smoke test C API
+      run: |
+          cargo cbuild
+          gcc -I target/debug/ -o rnnoise_demo test_data/rnnoise_demo.c target/debug/libnnnoiseless.a -lm -lpthread -ldl
+          cargo run --bin nnnoiseless test_data/testing.raw out_rust.raw
+          ./rnnoise_demo test_data/testing.raw out_c.raw
+          diff out_rust.raw out_c.raw
