@@ -22,28 +22,13 @@
 use rustfft::num_complex::Complex;
 use rustfft::FFTplanner;
 
+use crate::util::zip4;
+
 pub struct RealFft {
     sin_cos: Vec<(f32, f32)>,
     length: usize,
     forward: std::sync::Arc<dyn rustfft::FFT<f32>>,
     inverse: std::sync::Arc<dyn rustfft::FFT<f32>>,
-}
-
-fn zip4<A, B, C, D>(
-    a: A,
-    b: B,
-    c: C,
-    d: D,
-) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item)>
-where
-    A: IntoIterator,
-    B: IntoIterator,
-    C: IntoIterator,
-    D: IntoIterator,
-{
-    a.into_iter()
-        .zip(b.into_iter().zip(c.into_iter().zip(d)))
-        .map(|(w, (x, (y, z)))| (w, x, y, z))
 }
 
 impl RealFft {

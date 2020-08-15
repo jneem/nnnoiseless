@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::util::{inner_p_bytes as inner_p, relu, sigmoid_approx, tansig_approx};
+use crate::util::{relu, sigmoid_approx, tansig_approx, zip3};
 
 const MAX_NEURONS: usize = 128;
 
@@ -281,29 +281,32 @@ impl Default for RnnModel {
 
 impl DenseLayer {
     fn compute(&self, output: &mut [f32], input: &[f32]) {
-        let m = self.nb_inputs;
         let n = self.nb_neurons;
 
-        for i in 0..n {
-            // Compute update gate.
-            let sum =
-                self.bias[i] as f32 + inner_p(&self.input_weights[(i * m)..((i + 1) * m)], input);
-            output[i] = WEIGHTS_SCALE * sum;
+        for (out, bias) in output.iter_mut().zip(&self.bias[..]) {
+            *out = *bias as f32;
         }
+
+        for (col, y) in self.input_weights.chunks_exact(n).zip(input) {
+            for (&x, out) in col.iter().zip(output.iter_mut()) {
+                *out += x as f32 * y;
+            }
+        }
+
         match self.activation {
             Activation::Sigmoid => {
-                for i in 0..n {
-                    output[i] = sigmoid_approx(output[i]);
+                for out in output.iter_mut() {
+                    *out = sigmoid_approx(*out * WEIGHTS_SCALE);
                 }
             }
             Activation::Tanh => {
-                for i in 0..n {
-                    output[i] = tansig_approx(output[i]);
+                for out in output.iter_mut() {
+                    *out = tansig_approx(*out * WEIGHTS_SCALE);
                 }
             }
             Activation::Relu => {
-                for i in 0..n {
-                    output[i] = relu(output[i]);
+                for out in output.iter_mut() {
+                    *out = relu(*out * WEIGHTS_SCALE);
                 }
             }
         }
@@ -314,45 +317,68 @@ impl GruLayer {
     fn compute(&self, state: &mut [f32], input: &[f32]) {
         let mut z = [0.0; MAX_NEURONS];
         let mut r = [0.0; MAX_NEURONS];
-        let m = self.nb_inputs;
+        let mut h = [0.0; MAX_NEURONS];
         let n = self.nb_neurons;
+        let stride = n * 3;
 
-        for i in 0..n {
-            // Compute update gate.
-            let sum = self.bias[i] as f32
-                + inner_p(&self.input_weights[(i * m)..((i + 1) * m)], input)
-                + inner_p(&self.recurrent_weights[(i * n)..((i + 1) * n)], state);
-            z[i] = sigmoid_approx(WEIGHTS_SCALE * sum);
+        // Compute update gate.
+        for (z, bias) in z.iter_mut().zip(&self.bias[0..n]) {
+            *z = *bias as f32;
         }
-        for i in 0..n {
-            // Compute reset gate.
-            let sum = self.bias[n + i] as f32
-                + inner_p(&self.input_weights[((i + n) * m)..((i + n + 1) * m)], input)
-                + inner_p(
-                    &self.recurrent_weights[((i + n) * n)..((i + n + 1) * n)],
-                    state,
-                );
-            // NOTE: our r[i] differs from the one in rnnoise because we're premultiplying it by
-            // state[i].
-            r[i] = state[i] * sigmoid_approx(WEIGHTS_SCALE * sum);
+        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
+            for (&x, z) in input_col[0..n].iter().zip(z.iter_mut()) {
+                *z += x as f32 * y;
+            }
         }
-        for i in 0..n {
-            // Compute output.
-            let sum = self.bias[2 * n + i] as f32
-                + inner_p(
-                    &self.input_weights[((i + 2 * n) * m)..((i + 2 * n + 1) * m)],
-                    input,
-                )
-                + inner_p(
-                    &self.recurrent_weights[((i + 2 * n) * n)..((i + 2 * n + 1) * n)],
-                    &r[..],
-                );
-            let sum = match self.activation {
-                Activation::Sigmoid => sigmoid_approx(WEIGHTS_SCALE * sum),
-                Activation::Tanh => tansig_approx(WEIGHTS_SCALE * sum),
-                Activation::Relu => relu(WEIGHTS_SCALE * sum),
+        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&state[..]) {
+            for (&x, z) in rec_col[0..n].iter().zip(z.iter_mut()) {
+                *z += x as f32 * y;
+            }
+        }
+        for z in z[0..n].iter_mut() {
+            *z = sigmoid_approx(WEIGHTS_SCALE * *z);
+        }
+
+        // Compute reset gate.
+        for (dst, src) in r.iter_mut().zip(&self.bias[n..(2 * n)]) {
+            *dst = *src as f32;
+        }
+        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
+            for (&x, out) in input_col[n..(2 * n)].iter().zip(r.iter_mut()) {
+                *out += x as f32 * y;
+            }
+        }
+        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&state[..]) {
+            for (&x, out) in rec_col[n..(2 * n)].iter().zip(r.iter_mut()) {
+                *out += x as f32 * y;
+            }
+        }
+        for (out, &s) in r[0..n].iter_mut().zip(&state[..]) {
+            *out = s * sigmoid_approx(WEIGHTS_SCALE * *out);
+        }
+
+        // Compute output.
+        for (dst, src) in h.iter_mut().zip(&self.bias[(2 * n)..]) {
+            *dst = *src as f32;
+        }
+        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
+            for (&x, out) in input_col[(2 * n)..].iter().zip(h.iter_mut()) {
+                *out += x as f32 * y;
+            }
+        }
+        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&r[0..n]) {
+            for (&x, out) in rec_col[(2 * n)..].iter().zip(h.iter_mut()) {
+                *out += x as f32 * y;
+            }
+        }
+
+        for (s, &z, &h) in zip3(state, &z[0..n], &h[0..n]) {
+            let h = match self.activation {
+                Activation::Sigmoid => sigmoid_approx(WEIGHTS_SCALE * h),
+                Activation::Tanh => tansig_approx(WEIGHTS_SCALE * h),
+                Activation::Relu => relu(WEIGHTS_SCALE * h),
             };
-            state[i] = z[i] * state[i] + (1.0 - z[i]) * sum;
+            *s = z * *s + (1.0 - z) * h;
         }
     }
 }

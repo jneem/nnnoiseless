@@ -125,20 +125,9 @@ pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
     }
 }
 
-fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
-where
-    I: IntoIterator,
-    J: IntoIterator,
-    K: IntoIterator,
-{
-    i.into_iter()
-        .zip(j.into_iter().zip(k))
-        .map(|(x, (y, z))| (x, y, z))
-}
-
 fn apply_window(output: &mut [f32], input: &[f32]) {
     let c = common();
-    for (x, &y, &w) in zip3(output, input, &c.window[..]) {
+    for (x, &y, &w) in util::zip3(output, input, &c.window[..]) {
         *x = y * w;
     }
 }

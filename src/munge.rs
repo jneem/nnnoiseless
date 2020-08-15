@@ -22,8 +22,9 @@ fn reorder_weights(m: usize, n: usize, weights: &[i8]) -> Vec<i8> {
 
     for i in 0..n {
         for j in 0..m {
-            assert_eq!(0, ret[i * m + j]);
-            ret[i * m + j] = weights[i + n * j];
+            //assert_eq!(0, ret[i * m + j]);
+            //ret[i * m + j] = weights[i + n * j];
+            ret[i + n * j] = weights[i * m + j];
         }
     }
     ret
@@ -40,7 +41,7 @@ fn act_string(a: Activation) -> &'static str {
 fn print_array(name: String, data: &[i8]) {
     let data: Vec<_> = data.iter().map(|i| i.to_string()).collect();
     println!(
-        "const {}: [i8; {}] = [{}];",
+        "pub(crate) const {}: [i8; {}] = [{}];",
         name,
         data.len(),
         data.join(", ")

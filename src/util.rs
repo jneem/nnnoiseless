@@ -1,25 +1,3 @@
-pub(crate) fn inner_p_bytes(xs: &[i8], ys: &[f32]) -> f32 {
-    let n = xs.len();
-    let mut sum0 = 0.0;
-    let mut sum1 = 0.0;
-    let mut sum2 = 0.0;
-    let mut sum3 = 0.0;
-
-    let n_4 = n - n % 4;
-    for (x, y) in xs[..n_4].chunks_exact(4).zip(ys[..n_4].chunks_exact(4)) {
-        sum0 += x[0] as f32 * y[0];
-        sum1 += x[1] as f32 * y[1];
-        sum2 += x[2] as f32 * y[2];
-        sum3 += x[3] as f32 * y[3];
-    }
-
-    let mut sum = sum0 + sum1 + sum2 + sum3;
-    for (&x, &y) in xs[n_4..n].iter().zip(&ys[n_4..n]) {
-        sum += x as f32 * y;
-    }
-    sum
-}
-
 const TANSIG_TABLE: [f32; 201] = [
     0.000000, 0.039979, 0.079830, 0.119427, 0.158649, 0.197375, 0.235496, 0.272905, 0.309507,
     0.345214, 0.379949, 0.413644, 0.446244, 0.477700, 0.507977, 0.537050, 0.564900, 0.591519,
@@ -70,4 +48,32 @@ pub(crate) fn sigmoid_approx(x: f32) -> f32 {
 
 pub(crate) fn relu(x: f32) -> f32 {
     x.max(0.0)
+}
+
+pub(crate) fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
+where
+    I: IntoIterator,
+    J: IntoIterator,
+    K: IntoIterator,
+{
+    i.into_iter()
+        .zip(j.into_iter().zip(k))
+        .map(|(x, (y, z))| (x, y, z))
+}
+
+pub(crate) fn zip4<A, B, C, D>(
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item)>
+where
+    A: IntoIterator,
+    B: IntoIterator,
+    C: IntoIterator,
+    D: IntoIterator,
+{
+    a.into_iter()
+        .zip(b.into_iter().zip(c.into_iter().zip(d)))
+        .map(|(w, (x, (y, z)))| (w, x, y, z))
 }
