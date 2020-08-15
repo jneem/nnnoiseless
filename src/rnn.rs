@@ -280,18 +280,17 @@ impl Default for RnnModel {
 }
 
 impl DenseLayer {
+    fn matrix(&self) -> SubMatrix {
+        SubMatrix {
+            data: self.input_weights.as_ref(),
+            stride: self.nb_neurons,
+            offset: 0,
+        }
+    }
+
     fn compute(&self, output: &mut [f32], input: &[f32]) {
-        let n = self.nb_neurons;
-
-        for (out, bias) in output.iter_mut().zip(&self.bias[..]) {
-            *out = *bias as f32;
-        }
-
-        for (col, y) in self.input_weights.chunks_exact(n).zip(input) {
-            for (&x, out) in col.iter().zip(output.iter_mut()) {
-                *out += x as f32 * y;
-            }
-        }
+        copy_i8(output, &self.bias[..]);
+        self.matrix().mul_add(output, input);
 
         match self.activation {
             Activation::Sigmoid => {
@@ -314,63 +313,48 @@ impl DenseLayer {
 }
 
 impl GruLayer {
+    fn input_submatrix(&self, offset: usize) -> SubMatrix {
+        SubMatrix {
+            data: self.input_weights.as_ref(),
+            stride: self.nb_neurons * 3,
+            offset,
+        }
+    }
+
+    fn rec_submatrix(&self, offset: usize) -> SubMatrix {
+        SubMatrix {
+            data: self.recurrent_weights.as_ref(),
+            stride: self.nb_neurons * 3,
+            offset,
+        }
+    }
+
     fn compute(&self, state: &mut [f32], input: &[f32]) {
         let mut z = [0.0; MAX_NEURONS];
         let mut r = [0.0; MAX_NEURONS];
         let mut h = [0.0; MAX_NEURONS];
         let n = self.nb_neurons;
-        let stride = n * 3;
 
         // Compute update gate.
-        for (z, bias) in z.iter_mut().zip(&self.bias[0..n]) {
-            *z = *bias as f32;
-        }
-        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
-            for (&x, z) in input_col[0..n].iter().zip(z.iter_mut()) {
-                *z += x as f32 * y;
-            }
-        }
-        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&state[..]) {
-            for (&x, z) in rec_col[0..n].iter().zip(z.iter_mut()) {
-                *z += x as f32 * y;
-            }
-        }
+        copy_i8(&mut z[0..n], &self.bias[0..n]);
+        self.input_submatrix(0).mul_add(&mut z[0..n], input);
+        self.rec_submatrix(0).mul_add(&mut z[0..n], &state[..]);
         for z in z[0..n].iter_mut() {
             *z = sigmoid_approx(WEIGHTS_SCALE * *z);
         }
 
         // Compute reset gate.
-        for (dst, src) in r.iter_mut().zip(&self.bias[n..(2 * n)]) {
-            *dst = *src as f32;
-        }
-        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
-            for (&x, out) in input_col[n..(2 * n)].iter().zip(r.iter_mut()) {
-                *out += x as f32 * y;
-            }
-        }
-        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&state[..]) {
-            for (&x, out) in rec_col[n..(2 * n)].iter().zip(r.iter_mut()) {
-                *out += x as f32 * y;
-            }
-        }
+        copy_i8(&mut r[0..n], &self.bias[n..(2 * n)]);
+        self.input_submatrix(n).mul_add(&mut r[0..n], input);
+        self.rec_submatrix(n).mul_add(&mut r[0..n], &state[..]);
         for (out, &s) in r[0..n].iter_mut().zip(&state[..]) {
             *out = s * sigmoid_approx(WEIGHTS_SCALE * *out);
         }
 
         // Compute output.
-        for (dst, src) in h.iter_mut().zip(&self.bias[(2 * n)..]) {
-            *dst = *src as f32;
-        }
-        for (input_col, y) in self.input_weights.chunks_exact(stride).zip(input) {
-            for (&x, out) in input_col[(2 * n)..].iter().zip(h.iter_mut()) {
-                *out += x as f32 * y;
-            }
-        }
-        for (rec_col, y) in self.recurrent_weights.chunks_exact(stride).zip(&r[0..n]) {
-            for (&x, out) in rec_col[(2 * n)..].iter().zip(h.iter_mut()) {
-                *out += x as f32 * y;
-            }
-        }
+        copy_i8(&mut h[0..n], &self.bias[(2 * n)..]);
+        self.input_submatrix(2 * n).mul_add(&mut h[0..n], input);
+        self.rec_submatrix(2 * n).mul_add(&mut h[0..n], &r[0..n]);
 
         for (s, &z, &h) in zip3(state, &z[0..n], &h[0..n]) {
             let h = match self.activation {
@@ -440,5 +424,27 @@ const INPUT_SIZE: usize = 42;
 fn copy(dst: &mut [f32], src: &[f32]) {
     for (x, y) in dst.iter_mut().zip(src) {
         *x = *y;
+    }
+}
+
+fn copy_i8(dst: &mut [f32], src: &[i8]) {
+    for (x, y) in dst.iter_mut().zip(src) {
+        *x = *y as f32;
+    }
+}
+
+struct SubMatrix<'a> {
+    data: &'a [i8],
+    stride: usize,
+    offset: usize,
+}
+
+impl<'a> SubMatrix<'a> {
+    fn mul_add(&self, output: &mut [f32], input: &[f32]) {
+        for (col, input) in self.data.chunks_exact(self.stride).zip(input) {
+            for (&x, out) in col[self.offset..].iter().zip(&mut output[..]) {
+                *out += x as f32 * input;
+            }
+        }
     }
 }

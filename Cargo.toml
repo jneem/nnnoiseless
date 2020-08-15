@@ -15,7 +15,6 @@ default = ["bin"]
 
 bin = ["anyhow", "clap", "dasp_interpolate", "dasp_ring_buffer", "hound"]
 capi = ["libc"]
-munge = []
 
 [lib]
 bench = false
@@ -25,12 +24,6 @@ name = "nnnoiseless"
 path = "src/nnnoiseless.rs"
 bench = false
 required-features = ["bin"]
-
-[[bin]]
-name = "munge"
-path = "src/munge.rs"
-bench = false
-required-features = ["munge"]
 
 [[bench]]
 name = "sin"
