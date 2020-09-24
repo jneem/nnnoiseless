@@ -7,14 +7,25 @@ the [`RNNoise`][1] C library, and is based on a recurrent
 neural network.
 
 While `nnnoiseless` is meant to be used as a library, a simple command-line
-tool is provided as an example. It operates on WAV files or RAW 16-bit little-endian
-PCM files. Run
+tool is provided as an example. It operates on WAV files or RAW PCM files.
+Run
 
 ```
 cargo install nnnoiseless
 ```
 
-to install it.
+to install it (you might need to install [rust](https://www.rustlang.org) first).
+Once `nnnoiseless` is installed, you can run it like
+
+```
+nnnoiseless input.wav output.wav
+```
+
+or, for more advanced usage, try
+
+```
+nnnoiseless --help
+```
 
 ## Safety
 
@@ -25,9 +36,10 @@ measurable performance improvement. If a future version of
 [`RustFFT`](https://github.com/awelkie/RustFFT) has built-in support for
 real-only FFTs, this unsafe code will be removed.
 
-## C-API
+## C API
 
-It is possible to install `nnnoiseless` as C-API library, with a [`RNNoise`][1]-compatible header.
+It is possible to install `nnnoiseless` as a library usable from `C`, with an
+[`RNNoise`][1]-compatible header.
 
 ``` sh
 $ cargo install cargo-c
