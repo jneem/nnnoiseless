@@ -47,6 +47,7 @@ pub struct DenoiseState<'model> {
     mem_hp_x: [f32; 2],
     lastg: [f32; crate::NB_BANDS],
     rnn: crate::rnn::RnnState<'model>,
+    fft: crate::fft::RealFft,
 
     pitch_finder: crate::pitch::PitchFinder,
 }
@@ -91,6 +92,7 @@ impl<'model> DenoiseState<'model> {
             synthesis_mem: [0.0; FRAME_SIZE],
             mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
+            fft: crate::fft::RealFft::new(crate::sin_cos_table()),
             rnn: crate::rnn::RnnState::new(model),
             pitch_finder: crate::pitch::PitchFinder::new(),
         }
@@ -105,6 +107,23 @@ impl<'model> DenoiseState<'model> {
         let input = &self.input_mem[self.input_mem.len().checked_sub(PITCH_BUF_SIZE).unwrap()..];
         let (pitch, _gain) = self.pitch_finder.process(input);
         pitch
+    }
+
+    /// Performs an FFT on `input`, putting the result in `output`.
+    fn forward_transform(&mut self, output: &mut [Complex], input: &mut [f32]) {
+        self.fft.forward(input, output);
+
+        // In the original RNNoise code, the forward transform is normalized and the inverse
+        // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
+        let norm = 1.0 / WINDOW_SIZE as f32;
+        for x in &mut output[..] {
+            *x *= norm;
+        }
+    }
+
+    /// Performs an inverse FFT on `input`, putting the result in `output`.
+    fn inverse_transform(&mut self, output: &mut [f32], input: &mut [Complex]) {
+        self.fft.inverse(input, output);
     }
 
     /// Processes a chunk of samples.
@@ -126,7 +145,7 @@ impl<'model> DenoiseState<'model> {
 fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32]) {
     let mut buf = [0.0; WINDOW_SIZE];
     crate::apply_window(&mut buf[..], state.input(WINDOW_SIZE));
-    crate::forward_transform(x, &mut buf[..]);
+    state.forward_transform(x, &mut buf[..]);
     crate::compute_band_corr(ex, x, x);
 }
 
@@ -149,7 +168,7 @@ fn compute_frame_features(
     let pitch_idx = state.find_pitch();
 
     crate::apply_window(&mut p_buf[..], state.input(WINDOW_SIZE + pitch_idx));
-    crate::forward_transform(p, &mut p_buf[..]);
+    state.forward_transform(p, &mut p_buf[..]);
     crate::compute_band_corr(ep, p, p);
     crate::compute_band_corr(exp, x, p);
     for i in 0..NB_BANDS {
@@ -236,7 +255,7 @@ fn compute_frame_features(
 
 fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &mut [Complex]) {
     let mut x = [0.0; WINDOW_SIZE];
-    crate::inverse_transform(&mut x[..], y);
+    state.inverse_transform(&mut x[..], y);
     crate::apply_window_in_place(&mut x[..]);
     for i in 0..FRAME_SIZE {
         out[i] = x[i] + state.synthesis_mem[i];

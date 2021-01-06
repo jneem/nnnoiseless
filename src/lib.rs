@@ -77,7 +77,7 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32]) {
 struct CommonState {
     window: [f32; WINDOW_SIZE],
     dct_table: [f32; NB_BANDS * NB_BANDS],
-    fft: crate::fft::RealFft,
+    sin_cos_table: [(f32, f32); WINDOW_SIZE / 2],
 }
 
 static COMMON: OnceCell<CommonState> = OnceCell::new();
@@ -103,11 +103,12 @@ fn common() -> &'static CommonState {
             }
         }
 
-        let fft = crate::fft::RealFft::new(WINDOW_SIZE);
+        let mut sin_cos_table = [(0.0, 0.0); WINDOW_SIZE / 2];
+        crate::fft::precompute_sin_cos_table(&mut sin_cos_table[..]);
         let _ = COMMON.set(CommonState {
             window,
             dct_table,
-            fft,
+            sin_cos_table,
         });
     }
     COMMON.get().unwrap()
@@ -125,6 +126,10 @@ pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
     }
 }
 
+pub(crate) fn sin_cos_table() -> &'static [(f32, f32)] {
+    &common().sin_cos_table[..]
+}
+
 fn apply_window(output: &mut [f32], input: &[f32]) {
     let c = common();
     for (x, &y, &w) in util::zip3(output, input, &c.window[..]) {
@@ -137,25 +142,6 @@ fn apply_window_in_place(xs: &mut [f32]) {
     for (x, &w) in xs.iter_mut().zip(&c.window[..]) {
         *x *= w;
     }
-}
-
-fn forward_transform(output: &mut [Complex], input: &mut [f32]) {
-    let c = common();
-    let mut buf = [Complex::new(0.0, 0.0); FREQ_SIZE];
-    c.fft.forward(input, output, &mut buf[..]);
-
-    // In the original RNNoise code, the forward transform is normalized and the inverse
-    // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
-    let norm = 1.0 / WINDOW_SIZE as f32;
-    for x in &mut output[..] {
-        *x *= norm;
-    }
-}
-
-fn inverse_transform(output: &mut [f32], input: &mut [Complex]) {
-    let c = common();
-    let mut buf = [Complex::new(0.0, 0.0); WINDOW_SIZE / 2];
-    c.fft.inverse(input, output, &mut buf[..]);
 }
 
 #[cfg(test)]
