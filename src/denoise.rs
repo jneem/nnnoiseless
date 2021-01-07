@@ -361,3 +361,12 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
     frame_synthesis(state, output, &mut x_freq[..]);
     vad_prob[0]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    extern crate static_assertions as sa;
+
+    sa::assert_impl_all!(DenoiseState: Send, Sync);
+}

@@ -41,6 +41,7 @@ libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.3"
+static_assertions = "1.1.0"
 
 [package.metadata.capi]
 header_name = "rnnoise"
