@@ -78,6 +78,7 @@ struct CommonState {
     window: [f32; WINDOW_SIZE],
     dct_table: [f32; NB_BANDS * NB_BANDS],
     sin_cos_table: [(f32, f32); WINDOW_SIZE / 2],
+    wnorm: f32,
 }
 
 static COMMON: OnceCell<CommonState> = OnceCell::new();
@@ -91,6 +92,7 @@ fn common() -> &'static CommonState {
             window[i] = (0.5 * pi * sin * sin).sin() as f32;
             window[WINDOW_SIZE - i - 1] = (0.5 * pi * sin * sin).sin() as f32;
         }
+        let wnorm = 1_f32 / window.iter().map(|x| x * x).sum::<f32>();
 
         let mut dct_table = [0.0; NB_BANDS * NB_BANDS];
         for i in 0..NB_BANDS {
@@ -109,6 +111,7 @@ fn common() -> &'static CommonState {
             window,
             dct_table,
             sin_cos_table,
+            wnorm,
         });
     }
     COMMON.get().unwrap()
