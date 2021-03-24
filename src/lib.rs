@@ -185,14 +185,12 @@ mod tests {
 
         assert_eq!(output.len(), reference_output.len());
         let output = output.into_iter().map(|x| x as i16).collect::<Vec<_>>();
-        let xx: f64 = reference_output.iter().map(|&n| n as f64 * n as f64).sum();
-        let yy: f64 = output.iter().map(|&n| n as f64 * n as f64).sum();
-        let xy: f64 = reference_output
+        let xx: f64 = output.iter().map(|&x| (x as f64).powi(2)).sum();
+        let diff: f64 = reference_output
             .into_iter()
             .zip(output)
-            .map(|(n, m)| n as f64 * m as f64)
+            .map(|(x, y)| (x as f64 - y as f64).powi(2))
             .sum();
-        let corr = xy / (xx.sqrt() * yy.sqrt());
-        assert!((corr - 1.0).abs() < 1e-4);
+        assert!(diff / xx < 1e-4);
     }
 }
