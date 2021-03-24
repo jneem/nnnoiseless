@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    Complex, RnnModel, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
-    PITCH_BUF_SIZE, WINDOW_SIZE,
+    common, Complex, RnnModel, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS,
+    NB_FEATURES, PITCH_BUF_SIZE, WINDOW_SIZE,
 };
 
 /// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
@@ -115,7 +115,7 @@ impl<'model> DenoiseState<'model> {
 
         // In the original RNNoise code, the forward transform is normalized and the inverse
         // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
-        let norm = 1.0 / WINDOW_SIZE as f32;
+        let norm = common().wnorm;
         for x in &mut output[..] {
             *x *= norm;
         }
