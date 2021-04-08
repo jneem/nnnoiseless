@@ -457,7 +457,7 @@ fn pitch_downsample(x: &[f32], x_lp: &mut [f32]) {
     }
     x_lp[0] = (x[1] / 2.0 + x[0]) / 2.0;
 
-    celt_autocorr(x_lp, &mut ac);
+    celt_autocorr(&x_lp[..(x.len() / 2)], &mut ac);
 
     // Noise floor -40 dB
     ac[0] *= 1.0001;
