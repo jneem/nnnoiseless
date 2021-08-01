@@ -40,6 +40,10 @@ const EBAND_5MS: [usize; 22] = [
 ];
 type Complex = rustfft::num_complex::Complex32;
 
+/// Computes the correlation between two frequency-domain signals, and aggregates the correlation
+/// into bands.
+///
+/// `out` is the output (duh), and it has length `NB_BANDS`.
 pub(crate) fn compute_band_corr(out: &mut [f32], x: &[Complex], p: &[Complex]) {
     for y in out.iter_mut() {
         *y = 0.0;

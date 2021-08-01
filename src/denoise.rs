@@ -121,6 +121,16 @@ impl<'model> DenoiseState<'model> {
         }
     }
 
+    /// Fourier transforms the input, after looking back `lag` samples.
+    ///
+    /// The Fourier transform goes in `x` and the band energies go in `ex`.
+    fn transform_input(&mut self, lag: usize, x: &mut [Complex], ex: &mut [f32]) {
+        let mut buf = [0.0; WINDOW_SIZE];
+        crate::apply_window(&mut buf[..], self.input(WINDOW_SIZE + lag));
+        self.forward_transform(x, &mut buf[..]);
+        crate::compute_band_corr(ex, x, x);
+    }
+
     /// Performs an inverse FFT on `input`, putting the result in `output`.
     fn inverse_transform(&mut self, output: &mut [f32], input: &mut [Complex]) {
         self.fft.inverse(input, output);
@@ -142,13 +152,15 @@ impl<'model> DenoiseState<'model> {
     }
 }
 
-fn frame_analysis(state: &mut DenoiseState, x: &mut [Complex], ex: &mut [f32]) {
-    let mut buf = [0.0; WINDOW_SIZE];
-    crate::apply_window(&mut buf[..], state.input(WINDOW_SIZE));
-    state.forward_transform(x, &mut buf[..]);
-    crate::compute_band_corr(ex, x, x);
-}
-
+/// Computes the features of the current frame.
+///
+/// - `x` is the Fourier transform of the input, and `ex` are its band energies
+/// - `p` is the Fourier transform of older input, with a lag of the pitch period; `ep` are its band
+///     energies
+/// - `exp` is the band correlation between `x` and `p`
+/// - `features` are all the features of that get input to the neural network.
+///
+/// The return value is `true` if the input was pretty much silent.
 fn compute_frame_features(
     state: &mut DenoiseState,
     x: &mut [Complex],
@@ -157,19 +169,15 @@ fn compute_frame_features(
     ep: &mut [f32],
     exp: &mut [f32],
     features: &mut [f32],
-) -> usize {
+) -> bool {
     let mut ly = [0.0; NB_BANDS];
-    // p_buf and pitch_buf seem to have disjoint lifetimes, so we only need one.
-    let mut p_buf = [0.0; WINDOW_SIZE];
     let mut tmp = [0.0; NB_BANDS];
 
-    frame_analysis(state, x, ex);
+    state.transform_input(0, x, ex);
 
     let pitch_idx = state.find_pitch();
 
-    crate::apply_window(&mut p_buf[..], state.input(WINDOW_SIZE + pitch_idx));
-    state.forward_transform(p, &mut p_buf[..]);
-    crate::compute_band_corr(ep, p, p);
+    state.transform_input(pitch_idx, p, ep);
     crate::compute_band_corr(exp, x, p);
     for i in 0..NB_BANDS {
         exp[i] /= (0.001 + ex[i] * ep[i]).sqrt();
@@ -197,7 +205,7 @@ fn compute_frame_features(
         for i in 0..NB_FEATURES {
             features[i] = 0.0;
         }
-        return 1;
+        return true;
     }
     crate::dct(features, &ly[..]);
     features[0] -= 12.0;
@@ -250,7 +258,7 @@ fn compute_frame_features(
 
     features[NB_BANDS + 3 * NB_DELTA_CEPS + 1] = spec_variability / CEPS_MEM as f32 - 2.1;
 
-    return 0;
+    false
 }
 
 fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &mut [Complex]) {
@@ -343,7 +351,7 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
         &mut exp[..],
         &mut features[..],
     );
-    if silence == 0 {
+    if !silence {
         state
             .rnn
             .compute(&mut g[..], &mut vad_prob[..], &features[..]);
