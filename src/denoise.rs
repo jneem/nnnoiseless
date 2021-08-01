@@ -271,20 +271,6 @@ fn frame_synthesis(state: &mut DenoiseState, out: &mut [f32], y: &mut [Complex])
     }
 }
 
-fn biquad(ys: &mut [f32], mem: &mut [f32], xs: &[f32], b: &[f32], a: &[f32]) {
-    let a0 = a[0] as f64;
-    let a1 = a[1] as f64;
-    let b0 = b[0] as f64;
-    let b1 = b[1] as f64;
-    for (&x, y) in xs.iter().zip(ys) {
-        let x64 = x as f64;
-        let y64 = x64 + mem[0] as f64;
-        mem[0] = (mem[1] as f64 + (b0 * x64 - a0 * y64)) as f32;
-        mem[1] = (b1 * x64 - a1 * y64) as f32;
-        *y = y64 as f32;
-    }
-}
-
 fn pitch_filter(x: &mut [Complex], p: &[Complex], ex: &[f32], ep: &[f32], exp: &[f32], g: &[f32]) {
     let mut r = [0.0; NB_BANDS];
     let mut rf = [0.0; FREQ_SIZE];
@@ -326,8 +312,6 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
     let mut features = [0.0; NB_FEATURES];
     let mut g = [0.0; NB_BANDS];
     let mut gf = [1.0; FREQ_SIZE];
-    let a_hp = [-1.99599, 0.99600];
-    let b_hp = [-2.0, 1.0];
     let mut vad_prob = [0.0];
 
     // Shift our internal input buffer and copy the (filtered) input into it.
@@ -335,13 +319,7 @@ fn process_frame(state: &mut DenoiseState, output: &mut [f32], input: &[f32]) ->
     for i in 0..new_idx {
         state.input_mem[i] = state.input_mem[i + FRAME_SIZE];
     }
-    biquad(
-        &mut state.input_mem[new_idx..],
-        &mut state.mem_hp_x[..],
-        input,
-        &b_hp[..],
-        &a_hp[..],
-    );
+    crate::biquad::BIQUAD_HP.filter(&mut state.input_mem[new_idx..], &mut state.mem_hp_x, input);
     let silence = compute_frame_features(
         state,
         &mut x_freq[..],
