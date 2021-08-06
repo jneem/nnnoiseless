@@ -10,32 +10,41 @@ use once_cell::sync::OnceCell;
 #[cfg(any(cargo_c, feature = "capi"))]
 mod capi;
 
-mod biquad;
-mod denoise;
+#[doc(hidden)]
+pub mod biquad;
+#[doc(hidden)]
+pub mod denoise;
 mod fft;
 mod model;
 mod pitch;
 mod rnn;
-mod util;
+#[doc(hidden)]
+pub mod util;
 
 pub use denoise::DenoiseState;
 pub use rnn::RnnModel;
 
-pub(crate) const FRAME_SIZE_SHIFT: usize = 2;
-pub(crate) const FRAME_SIZE: usize = 120 << FRAME_SIZE_SHIFT;
+#[doc(hidden)]
+pub const FRAME_SIZE_SHIFT: usize = 2;
+#[doc(hidden)]
+pub const FRAME_SIZE: usize = 120 << FRAME_SIZE_SHIFT;
 pub(crate) const WINDOW_SIZE: usize = 2 * FRAME_SIZE;
-pub(crate) const FREQ_SIZE: usize = FRAME_SIZE + 1;
+#[doc(hidden)]
+pub const FREQ_SIZE: usize = FRAME_SIZE + 1;
 
 pub(crate) const PITCH_MIN_PERIOD: usize = 60;
 pub(crate) const PITCH_MAX_PERIOD: usize = 768;
 pub(crate) const PITCH_FRAME_SIZE: usize = 960;
 pub(crate) const PITCH_BUF_SIZE: usize = PITCH_MAX_PERIOD + PITCH_FRAME_SIZE;
 
-pub(crate) const NB_BANDS: usize = 22;
+#[doc(hidden)]
+pub const NB_BANDS: usize = 22;
 pub(crate) const CEPS_MEM: usize = 8;
 const NB_DELTA_CEPS: usize = 6;
-pub(crate) const NB_FEATURES: usize = NB_BANDS + 3 * NB_DELTA_CEPS + 2;
-const EBAND_5MS: [usize; 22] = [
+#[doc(hidden)]
+pub const NB_FEATURES: usize = NB_BANDS + 3 * NB_DELTA_CEPS + 2;
+#[doc(hidden)]
+pub const EBAND_5MS: [usize; 22] = [
     // 0  200 400 600 800  1k 1.2 1.4 1.6  2k 2.4 2.8 3.2  4k 4.8 5.6 6.8  8k 9.6 12k 15.6 20k*/
     0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 34, 40, 48, 60, 78, 100,
 ];

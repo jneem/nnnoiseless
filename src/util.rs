@@ -50,7 +50,7 @@ pub(crate) fn relu(x: f32) -> f32 {
     x.max(0.0)
 }
 
-pub(crate) fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
+pub fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
 where
     I: IntoIterator,
     J: IntoIterator,
