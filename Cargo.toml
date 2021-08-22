@@ -9,6 +9,7 @@ repository = "https://github.com/jneem/nnnoiseless"
 description = "Audio denoising, derived from Xiph's RNNoise library"
 autobenches = false
 exclude = [ "test_data/*" ]
+default-run = "nnnoiseless"
 
 [features]
 default = ["bin"]
