@@ -1,3 +1,5 @@
+//! Utility functions.
+
 const TANSIG_TABLE: [f32; 201] = [
     0.000000, 0.039979, 0.079830, 0.119427, 0.158649, 0.197375, 0.235496, 0.272905, 0.309507,
     0.345214, 0.379949, 0.413644, 0.446244, 0.477700, 0.507977, 0.537050, 0.564900, 0.591519,
@@ -50,6 +52,7 @@ pub(crate) fn relu(x: f32) -> f32 {
     x.max(0.0)
 }
 
+/// Zip 3 things.
 pub fn zip3<I, J, K>(i: I, j: J, k: K) -> impl Iterator<Item = (I::Item, J::Item, K::Item)>
 where
     I: IntoIterator,
@@ -76,4 +79,66 @@ where
     a.into_iter()
         .zip(b.into_iter().zip(c.into_iter().zip(d)))
         .map(|(w, (x, (y, z)))| (w, x, y, z))
+}
+
+/// A basic high-pass filter.
+pub const BIQUAD_HP: Biquad = Biquad {
+    a: [-1.99599, 0.99600],
+    b: [-2.0, 1.0],
+};
+
+/// A biquad filter.
+///
+/// Our convention here is that both sets of coefficients come with an implicit leading "1". To be
+/// precise, if `x` is the input then this filter outputs `y` defined by
+/// ```text
+/// y[n] = x[n] + b[0] * x[n-1] + b[1] * x[n-2] - a[0] * y[n-1] - a[1] * y[n-2].
+/// ```
+#[derive(Default)]
+pub struct Biquad {
+    /// The auto-regressive coefficients.
+    pub a: [f32; 2],
+    /// The moving-average coefficients.
+    pub b: [f32; 2],
+}
+
+impl Biquad {
+    /// Apply this biquad filter to `input`, putting the result in `output`.
+    ///
+    /// `mem` is a scratch buffer allowing you filter a long signal one buffer at a time. If you
+    /// call this function multiple times with the same `mem` buffer, the output will be as though
+    /// you had called it once with a longer `input`. The first time you call `filter` on a given
+    /// signal, `mem` should be zero.
+    pub fn filter(&self, output: &mut [f32], mem: &mut [f32; 2], input: &[f32]) {
+        let a0 = self.a[0] as f64;
+        let a1 = self.a[1] as f64;
+        let b0 = self.b[0] as f64;
+        let b1 = self.b[1] as f64;
+        for (&x, y) in input.iter().zip(output) {
+            let x64 = x as f64;
+            let y64 = x64 + mem[0] as f64;
+            mem[0] = (mem[1] as f64 + (b0 * x64 - a0 * y64)) as f32;
+            mem[1] = (b1 * x64 - a1 * y64) as f32;
+            *y = y64 as f32;
+        }
+    }
+
+    /// Apply this biquad filter to `data`, modifying it in place.
+    ///
+    /// See [`Biquad::filter`] for more details.
+    // This is only used when the "train" feature is active.
+    #[cfg_attr(not(feature = "train"), allow(dead_code))]
+    pub fn filter_in_place(&self, data: &mut [f32], mem: &mut [f32; 2]) {
+        let a0 = self.a[0] as f64;
+        let a1 = self.a[1] as f64;
+        let b0 = self.b[0] as f64;
+        let b1 = self.b[1] as f64;
+        for x in data {
+            let x64 = *x as f64;
+            let y64 = x64 + mem[0] as f64;
+            mem[0] = (mem[1] as f64 + (b0 * x64 - a0 * y64)) as f32;
+            mem[1] = (b1 * x64 - a1 * y64) as f32;
+            *x = y64 as f32;
+        }
+    }
 }
