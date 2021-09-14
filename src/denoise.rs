@@ -1,9 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{
-    common, Complex, RnnModel, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS,
-    NB_FEATURES, PITCH_BUF_SIZE, WINDOW_SIZE,
-};
+use crate::{RnnModel, FRAME_SIZE, FREQ_SIZE, NB_BANDS};
 
 /// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
 /// that are used while denoising. As such, this is quite a large struct, and should probably be
@@ -35,21 +32,12 @@ use crate::{
 /// ```
 #[derive(Clone)]
 pub struct DenoiseState<'model> {
-    /// This stores some of the previous input. Currently, whenever we get new input we shift this
-    /// backwards and copy the new input at the end. It might be worth investigating a ring buffer.
-    input_mem: Vec<f32>,
-    /// This is some sort of ring buffer, storing the last bunch of cepstra.
-    cepstral_mem: [[f32; crate::NB_BANDS]; crate::CEPS_MEM],
-    /// The index pointing to the most recent cepstrum in `cepstral_mem`. The previous cepstra are
-    /// at indices mem_id - 1, mem_id - 1, etc (wrapped appropriately).
-    mem_id: usize,
-    synthesis_mem: [f32; FRAME_SIZE],
+    /// State for the high-pass filter we apply to the input.
     mem_hp_x: [f32; 2],
+    /// Most recent gains that we applied.
     lastg: [f32; crate::NB_BANDS],
     rnn: crate::rnn::RnnState<'model>,
-    fft: crate::fft::RealFft,
-
-    pitch_finder: crate::pitch::PitchFinder,
+    feat: crate::features::DenoiseFeatures,
 }
 
 impl DenoiseState<'static> {
@@ -86,192 +74,10 @@ impl<'model> DenoiseState<'model> {
 
     pub(crate) fn from_model_owned(model: Cow<'model, RnnModel>) -> DenoiseState<'model> {
         DenoiseState {
-            input_mem: vec![0.0; FRAME_SIZE.max(PITCH_BUF_SIZE)],
-            cepstral_mem: [[0.0; NB_BANDS]; CEPS_MEM],
-            mem_id: 0,
-            synthesis_mem: [0.0; FRAME_SIZE],
             mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
-            fft: crate::fft::RealFft::new(crate::sin_cos_table()),
             rnn: crate::rnn::RnnState::new(model),
-            pitch_finder: crate::pitch::PitchFinder::new(),
-        }
-    }
-
-    #[cfg(feature = "train")]
-    #[doc(hidden)]
-    /// Shifts our input buffer and adds the new input to it. This is only used for generating
-    /// training data, because in normal use we apply a biquad filter while adding the new input.
-    pub fn shift_input(&mut self, input: &[f32]) {
-        assert!(input.len() == FRAME_SIZE);
-        let new_idx = self.input_mem.len() - FRAME_SIZE;
-        for i in 0..new_idx {
-            self.input_mem[i] = self.input_mem[i + FRAME_SIZE];
-        }
-        for (x, y) in self.input_mem[new_idx..].iter_mut().zip(input) {
-            *x = *y;
-        }
-    }
-
-    // Returns the most recent chunk of input from our internal buffer.
-    fn input(&self, len: usize) -> &[f32] {
-        &self.input_mem[self.input_mem.len().checked_sub(len).unwrap()..]
-    }
-
-    fn find_pitch(&mut self) -> usize {
-        let input = &self.input_mem[self.input_mem.len().checked_sub(PITCH_BUF_SIZE).unwrap()..];
-        let (pitch, _gain) = self.pitch_finder.process(input);
-        pitch
-    }
-
-    /// Performs an FFT on `input`, putting the result in `output`.
-    fn forward_transform(&mut self, output: &mut [Complex], input: &mut [f32]) {
-        self.fft.forward(input, output);
-
-        // In the original RNNoise code, the forward transform is normalized and the inverse
-        // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
-        let norm = common().wnorm;
-        for x in &mut output[..] {
-            *x *= norm;
-        }
-    }
-
-    /// Fourier transforms the input, after looking back `lag` samples.
-    ///
-    /// The Fourier transform goes in `x` and the band energies go in `ex`.
-    // This is public for the training code.
-    #[doc(hidden)]
-    pub fn transform_input(&mut self, lag: usize, x: &mut [Complex], ex: &mut [f32]) {
-        let mut buf = [0.0; WINDOW_SIZE];
-        crate::apply_window(&mut buf[..], self.input(WINDOW_SIZE + lag));
-        self.forward_transform(x, &mut buf[..]);
-        crate::compute_band_corr(ex, x, x);
-    }
-
-    /// Performs an inverse FFT on `input`, putting the result in `output`.
-    fn inverse_transform(&mut self, output: &mut [f32], input: &mut [Complex]) {
-        self.fft.inverse(input, output);
-    }
-
-    /// Computes the features of the current frame.
-    ///
-    /// - `x` is the Fourier transform of the input, and `ex` are its band energies
-    /// - `p` is the Fourier transform of older input, with a lag of the pitch period; `ep` are its band
-    ///     energies
-    /// - `exp` is the band correlation between `x` and `p`
-    /// - `features` are all the features of that get input to the neural network.
-    ///
-    /// The return value is `true` if the input was pretty much silent.
-    //
-    // This is public because of the training code.
-    #[doc(hidden)]
-    pub fn compute_frame_features(
-        &mut self,
-        x: &mut [Complex],
-        p: &mut [Complex],
-        ex: &mut [f32],
-        ep: &mut [f32],
-        exp: &mut [f32],
-        features: &mut [f32],
-    ) -> bool {
-        let mut ly = [0.0; NB_BANDS];
-        let mut tmp = [0.0; NB_BANDS];
-
-        self.transform_input(0, x, ex);
-
-        let pitch_idx = self.find_pitch();
-
-        self.transform_input(pitch_idx, p, ep);
-        crate::compute_band_corr(exp, x, p);
-        for i in 0..NB_BANDS {
-            exp[i] /= (0.001 + ex[i] * ep[i]).sqrt();
-        }
-        crate::dct(&mut tmp[..], exp);
-        for i in 0..NB_DELTA_CEPS {
-            features[NB_BANDS + 2 * NB_DELTA_CEPS + i] = tmp[i];
-        }
-
-        features[NB_BANDS + 2 * NB_DELTA_CEPS] -= 1.3;
-        features[NB_BANDS + 2 * NB_DELTA_CEPS + 1] -= 0.9;
-        features[NB_BANDS + 3 * NB_DELTA_CEPS] = 0.01 * (pitch_idx as f32 - 300.0);
-        let mut log_max = -2.0;
-        let mut follow = -2.0;
-        let mut e = 0.0;
-        for i in 0..NB_BANDS {
-            ly[i] = (1e-2 + ex[i]).log10().max(log_max - 7.0).max(follow - 1.5);
-            log_max = log_max.max(ly[i]);
-            follow = (follow - 1.5).max(ly[i]);
-            e += ex[i];
-        }
-
-        if e < 0.04 {
-            /* If there's no audio, avoid messing up the state. */
-            for i in 0..NB_FEATURES {
-                features[i] = 0.0;
-            }
-            return true;
-        }
-        crate::dct(features, &ly[..]);
-        features[0] -= 12.0;
-        features[1] -= 4.0;
-        let ceps_0_idx = self.mem_id;
-        let ceps_1_idx = if self.mem_id < 1 {
-            CEPS_MEM + self.mem_id - 1
-        } else {
-            self.mem_id - 1
-        };
-        let ceps_2_idx = if self.mem_id < 2 {
-            CEPS_MEM + self.mem_id - 2
-        } else {
-            self.mem_id - 2
-        };
-
-        for i in 0..NB_BANDS {
-            self.cepstral_mem[ceps_0_idx][i] = features[i];
-        }
-        self.mem_id += 1;
-
-        let ceps_0 = &self.cepstral_mem[ceps_0_idx];
-        let ceps_1 = &self.cepstral_mem[ceps_1_idx];
-        let ceps_2 = &self.cepstral_mem[ceps_2_idx];
-        for i in 0..NB_DELTA_CEPS {
-            features[i] = ceps_0[i] + ceps_1[i] + ceps_2[i];
-            features[NB_BANDS + i] = ceps_0[i] - ceps_2[i];
-            features[NB_BANDS + NB_DELTA_CEPS + i] = ceps_0[i] - 2.0 * ceps_1[i] + ceps_2[i];
-        }
-
-        /* Spectral variability features. */
-        let mut spec_variability = 0.0;
-        if self.mem_id == CEPS_MEM {
-            self.mem_id = 0;
-        }
-        for i in 0..CEPS_MEM {
-            let mut min_dist = 1e15f32;
-            for j in 0..CEPS_MEM {
-                let mut dist = 0.0;
-                for k in 0..NB_BANDS {
-                    let tmp = self.cepstral_mem[i][k] - self.cepstral_mem[j][k];
-                    dist += tmp * tmp;
-                }
-                if j != i {
-                    min_dist = min_dist.min(dist);
-                }
-            }
-            spec_variability += min_dist;
-        }
-
-        features[NB_BANDS + 3 * NB_DELTA_CEPS + 1] = spec_variability / CEPS_MEM as f32 - 2.1;
-
-        false
-    }
-
-    fn frame_synthesis(&mut self, out: &mut [f32], y: &mut [Complex]) {
-        let mut x = [0.0; WINDOW_SIZE];
-        self.inverse_transform(&mut x[..], y);
-        crate::apply_window_in_place(&mut x[..]);
-        for i in 0..FRAME_SIZE {
-            out[i] = x[i] + self.synthesis_mem[i];
-            self.synthesis_mem[i] = x[FRAME_SIZE + i];
+            feat: crate::features::DenoiseFeatures::new(),
         }
     }
 
@@ -287,87 +93,26 @@ impl<'model> DenoiseState<'model> {
     /// preceding inputs. Because of this, you might prefer to discard the very first output; it
     /// will contain some fade-in artifacts.
     pub fn process_frame(&mut self, output: &mut [f32], input: &[f32]) -> f32 {
-        let mut x_freq = [Complex::from(0.0); FREQ_SIZE];
-        let mut p = [Complex::from(0.0); FREQ_SIZE];
-        let mut ex = [0.0; NB_BANDS];
-        let mut ep = [0.0; NB_BANDS];
-        let mut exp = [0.0; NB_BANDS];
-        let mut features = [0.0; NB_FEATURES];
         let mut g = [0.0; NB_BANDS];
         let mut gf = [1.0; FREQ_SIZE];
         let mut vad_prob = [0.0];
 
-        // Shift our internal input buffer and copy the (filtered) input into it.
-        let new_idx = self.input_mem.len() - FRAME_SIZE;
-        for i in 0..new_idx {
-            self.input_mem[i] = self.input_mem[i + FRAME_SIZE];
-        }
-        crate::biquad::BIQUAD_HP.filter(&mut self.input_mem[new_idx..], &mut self.mem_hp_x, input);
-        let silence = self.compute_frame_features(
-            &mut x_freq[..],
-            &mut p[..],
-            &mut ex[..],
-            &mut ep[..],
-            &mut exp[..],
-            &mut features[..],
-        );
+        self.feat.shift_and_filter_input(input);
+        let silence = self.feat.compute_frame_features();
         if !silence {
             self.rnn
-                .compute(&mut g[..], &mut vad_prob[..], &features[..]);
-            pitch_filter(&mut x_freq[..], &p[..], &ex[..], &ep[..], &exp[..], &g[..]);
+                .compute(&mut g[..], &mut vad_prob[..], self.feat.features());
+            self.feat.pitch_filter(&g);
             for i in 0..NB_BANDS {
                 g[i] = g[i].max(0.6 * self.lastg[i]);
                 self.lastg[i] = g[i];
             }
             crate::interp_band_gain(&mut gf[..], &g[..]);
-            for i in 0..FREQ_SIZE {
-                x_freq[i] *= gf[i];
-            }
+            self.feat.apply_gain(&gf);
         }
 
-        self.frame_synthesis(output, &mut x_freq[..]);
+        self.feat.frame_synthesis(output);
         vad_prob[0]
-    }
-}
-
-// Public because of training code.
-#[doc(hidden)]
-pub fn pitch_filter(
-    x: &mut [Complex],
-    p: &[Complex],
-    ex: &[f32],
-    ep: &[f32],
-    exp: &[f32],
-    g: &[f32],
-) {
-    let mut r = [0.0; NB_BANDS];
-    let mut rf = [0.0; FREQ_SIZE];
-    for i in 0..NB_BANDS {
-        r[i] = if exp[i] > g[i] {
-            1.0
-        } else {
-            let exp_sq = exp[i] * exp[i];
-            let g_sq = g[i] * g[i];
-            exp_sq * (1.0 - g_sq) / (0.001 + g_sq * (1.0 - exp_sq))
-        };
-        r[i] = 1.0_f32.min(0.0_f32.max(r[i])).sqrt();
-        r[i] *= (ex[i] / (1e-8 + ep[i])).sqrt();
-    }
-    crate::interp_band_gain(&mut rf[..], &r[..]);
-    for i in 0..FREQ_SIZE {
-        x[i] += rf[i] * p[i];
-    }
-
-    let mut new_e = [0.0; NB_BANDS];
-    crate::compute_band_corr(&mut new_e[..], x, x);
-    let mut norm = [0.0; NB_BANDS];
-    let mut normf = [0.0; FREQ_SIZE];
-    for i in 0..NB_BANDS {
-        norm[i] = (ex[i] / (1e-8 + new_e[i])).sqrt();
-    }
-    crate::interp_band_gain(&mut normf[..], &norm[..]);
-    for i in 0..FREQ_SIZE {
-        x[i] *= normf[i];
     }
 }
 

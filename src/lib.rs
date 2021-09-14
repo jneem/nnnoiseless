@@ -10,16 +10,21 @@ use once_cell::sync::OnceCell;
 #[cfg(any(cargo_c, feature = "capi"))]
 mod capi;
 
-#[doc(hidden)]
-pub mod biquad;
-#[doc(hidden)]
-pub mod denoise;
+#[cfg(feature = "train")]
+pub mod features;
+#[cfg(feature = "train")]
+pub mod util;
+
+#[cfg(not(feature = "train"))]
+mod features;
+#[cfg(not(feature = "train"))]
+mod util;
+
+mod denoise;
 mod fft;
 mod model;
 mod pitch;
 mod rnn;
-#[doc(hidden)]
-pub mod util;
 
 pub use denoise::DenoiseState;
 pub use rnn::RnnModel;
