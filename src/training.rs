@@ -1,8 +1,12 @@
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::BufReader;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{crate_version, App, Arg};
+use hound::WavReader;
+use ndarray::s;
+use rand::seq::SliceRandom;
 use rand::Rng;
 
 use nnnoiseless::features::DenoiseFeatures;
@@ -13,23 +17,47 @@ use nnnoiseless::{NB_BANDS, NB_FEATURES};
 // After this many frames, we re-randomize the gains and the filters.
 const GAIN_CHANGE_COUNT: u32 = 2821;
 
+fn glob_paths<'a>(globs: impl Iterator<Item = &'a str>) -> Result<Vec<PathBuf>> {
+    let mut ret = Vec::new();
+    for glob in globs {
+        let paths = glob::glob(glob).context(format!("while expanding glob {}", glob))?;
+        for p in paths {
+            ret.push(p.context(format!("while expanding glob {}", glob))?);
+        }
+    }
+    Ok(ret)
+}
+
 fn main() -> Result<()> {
     let matches = App::new("nnnoiseless-gen-training-data")
         .version(crate_version!())
         .about("Generate data for training nnnoiseless models")
         .arg(
-            Arg::with_name("SIGNAL")
-                .help("clean audio signal data")
+            Arg::with_name("signal-glob")
+                .help("wildcard for audio signal data")
+                .long("signal-glob")
+                .takes_value(true)
+                .multiple(true)
                 .required(true),
         )
         .arg(
-            Arg::with_name("NOISE")
-                .help("audio noise data")
+            Arg::with_name("noise-glob")
+                .help("wildcard for audio noise data")
+                .long("noise-glob")
+                .takes_value(true)
+                .multiple(true)
                 .required(true),
         )
         .arg(
-            Arg::with_name("COUNT")
+            Arg::with_name("shuffle")
+                .help("if set, shuffle the signal and noise files")
+                .long("shuffle"),
+        )
+        .arg(
+            Arg::with_name("count")
                 .help("number of frames to generate")
+                .long("count")
+                .takes_value(true)
                 .required(true),
         )
         .arg(
@@ -41,20 +69,32 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let signal_name = matches.value_of("SIGNAL").unwrap();
-    let noise_name = matches.value_of("NOISE").unwrap();
+    let signal_globs = matches.values_of("signal-glob").unwrap();
+    let noise_globs = matches.values_of("noise-glob").unwrap();
     let count: usize = matches
-        .value_of("COUNT")
+        .value_of("count")
         .unwrap()
         .parse()
-        .context("COUNT must be a non-negative integer")?;
+        .context("count must be a non-negative integer")?;
+    let shuffle = matches.is_present("shuffle");
 
-    let signal_file = File::open(signal_name).context("failed to open signal file")?;
-    let noise_file = File::open(noise_name).context("failed to open noise file")?;
+    let mut signal_paths = glob_paths(signal_globs)?;
+    let mut noise_paths = glob_paths(noise_globs)?;
+
+    if shuffle {
+        signal_paths.shuffle(&mut rand::thread_rng());
+        noise_paths.shuffle(&mut rand::thread_rng());
+    }
+
     let out_name = matches.value_of("output").unwrap();
-    // TODO: stream the output instead of storing it all.
+    let out_file = hdf5::File::create(out_name).context("failed to open output file")?;
+    let (width, height) = (NB_FEATURES + 2 * NB_BANDS + 1, count);
+    let dataset = hdf5::DatasetBuilder::<f32>::new(&out_file).create("data", (height, width))?;
+    // A buffer containing just enough output for a single frame.
     let mut output = Vec::<f32>::new();
-    let mut sim = NoiseSimulator::new(BufReader::new(signal_file), BufReader::new(noise_file));
+    let signal_reader = SignalReader::new(signal_paths, count);
+    let noise_reader = SignalReader::new(noise_paths, count);
+    let mut sim = NoiseSimulator::new(signal_reader, noise_reader);
 
     let mut clean_features = DenoiseFeatures::new();
     let mut noise_features = DenoiseFeatures::new();
@@ -102,15 +142,103 @@ fn main() -> Result<()> {
         output.extend_from_slice(&gains[..]);
         output.extend_from_slice(&noise_level[..]);
         output.extend_from_slice(&[frame.vad][..]);
+        dataset.write_slice(&output[..], s![i, 0..width])?;
+        output.clear();
     }
-    write_hdf5(&output[..], count, NB_FEATURES + 2 * NB_BANDS + 1, out_name)?;
+    out_file.flush()?;
+    out_file.close();
 
     Ok(())
 }
 
+// The signals (both the clean signal and the noise) are spread out over lots of files, and we want
+// to sample audio from many of them. This struct abstracts over that task: it holds a bunch of
+// paths, and you can just ask it for the next frame of audio.
+struct SignalReader {
+    paths: Vec<PathBuf>,
+    /// How many frames should we extract before skipping to the next file? (This is an upper bound
+    /// -- if the file doesn't have enough frames, we just read the whole thing.)
+    frames_per_file: usize,
+    /// The index of the file we're currently reading, or the next one to read.
+    cur_idx: usize,
+    /// How many frames should we read from the current file?
+    frames_left: usize,
+    /// The current input.
+    reader: Option<WavReader<BufReader<File>>>,
+}
+
+impl SignalReader {
+    fn new(paths: Vec<PathBuf>, count: usize) -> SignalReader {
+        assert!(!paths.is_empty(), "cannot read from an empty set of files");
+        SignalReader {
+            frames_per_file: ((count / paths.len()) + 1).max(100),
+            paths,
+            cur_idx: 0,
+            frames_left: 0,
+            reader: None,
+        }
+    }
+
+    fn frame(&mut self, buf: &mut [f32]) -> Result<()> {
+        if self.reader.is_none() {
+            if self.cur_idx >= self.paths.len() {
+                self.cur_idx = 0;
+            }
+            let mut reader = WavReader::open(&self.paths[self.cur_idx])?;
+
+            let spec = reader.spec();
+            if spec.channels != 1
+                || spec.sample_rate != 48_000
+                || spec.bits_per_sample != 16
+                || spec.sample_format != hound::SampleFormat::Int
+            {
+                anyhow::bail!("unsupported wav format {:?}", spec);
+            }
+
+            // We want num_samples samples, and the file has len samples. If the file is big
+            // enough, take a random slice of it.
+            let len = reader.duration() as usize;
+            let num_samples = nnnoiseless::FRAME_SIZE * self.frames_per_file;
+            if len > num_samples {
+                reader
+                    .seek(rand::thread_rng().gen_range(0..=(len - num_samples) as u32))
+                    .context(format!("failed to seek in {:?}", self.paths[self.cur_idx]))?;
+                self.frames_left = self.frames_per_file;
+            } else {
+                self.frames_left = len / nnnoiseless::FRAME_SIZE;
+                // FIXME: give a sane warning if the file is too small for a single frame
+            }
+            self.reader = Some(reader);
+        }
+
+        let r = self.reader.as_mut().unwrap();
+        let mut samples_read = 0;
+        for (s, x) in r.samples::<i16>().zip(buf.iter_mut()) {
+            samples_read += 1;
+            *x = s? as f32;
+        }
+        if samples_read < buf.len() {
+            // We ran out of samples in this file.
+            // TODO: warn? This shouldn't happen if we calculated frames_left correctly...
+            for x in &mut buf[samples_read..] {
+                *x = 0.0;
+            }
+            self.frames_left = 0;
+        }
+
+        if self.frames_left <= 1 {
+            self.reader = None;
+            self.cur_idx += 1;
+        } else {
+            self.frames_left -= 1;
+        }
+        Ok(())
+    }
+}
+
 struct NoiseSimulator {
-    signal: BufReader<File>,
-    noise: BufReader<File>,
+    signal: SignalReader,
+    noise: SignalReader,
     sig_filter: Biquad,
     noise_filter: Biquad,
     vad_count: i32,
@@ -120,8 +248,6 @@ struct NoiseSimulator {
     lowpass: usize,
     band_lp: usize,
 
-    /// A buffer of length FRAME_SIZE * 2 (for reading in enough bytes to have FRAME_SIZE i16s).
-    read_buf: Vec<u8>,
     sig_buf: Vec<f32>,
     noise_buf: Vec<f32>,
     out_buf: Vec<f32>,
@@ -140,40 +266,6 @@ struct NoisyFrame<'a> {
     vad: f32,
 }
 
-// Reads from a file, looping back to the beginning once we get to the end.
-fn read_loop(read: &mut BufReader<File>, output: &mut [u8]) -> Result<()> {
-    match read.read_exact(output) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            read.seek(SeekFrom::Start(0))?;
-            Ok(read.read_exact(output)?)
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-
-fn read_input(
-    read: &mut BufReader<File>,
-    buf: &mut [u8],
-    out: &mut [f32],
-    gain: f32,
-) -> Result<f32> {
-    let mut energy = 0.0;
-    if gain != 0.0 {
-        read_loop(read, buf)?;
-        for (input, out) in buf.chunks_exact(2).zip(out) {
-            let x = i16::from_le_bytes([input[0], input[1]]) as f32;
-            *out = gain * x;
-            energy += x * x;
-        }
-    } else {
-        for out in out {
-            *out = 0.0;
-        }
-    }
-    Ok(energy)
-}
-
 fn random_filter() -> Biquad {
     let r = || 0.75 * (rand::random::<f32>() - 0.5);
     Biquad {
@@ -182,17 +274,8 @@ fn random_filter() -> Biquad {
     }
 }
 
-fn write_hdf5(data: &[f32], height: usize, width: usize, filename: &str) -> Result<()> {
-    let f = hdf5::File::create(filename).context("failed to open output file")?;
-    let dataset = hdf5::DatasetBuilder::<f32>::new(&f).create("data", (height, width))?;
-    dataset.write_raw(data)?;
-    f.flush()?;
-    f.close();
-    Ok(())
-}
-
 impl NoiseSimulator {
-    fn new(signal: BufReader<File>, noise: BufReader<File>) -> NoiseSimulator {
+    fn new(signal: SignalReader, noise: SignalReader) -> NoiseSimulator {
         NoiseSimulator {
             signal,
             noise,
@@ -205,7 +288,6 @@ impl NoiseSimulator {
             lowpass: nnnoiseless::FREQ_SIZE,
             band_lp: nnnoiseless::NB_BANDS - 1,
 
-            read_buf: vec![0; nnnoiseless::FRAME_SIZE * 2],
             sig_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
             noise_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
             out_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
@@ -218,24 +300,22 @@ impl NoiseSimulator {
     }
 
     fn read_noise(&mut self) -> Result<()> {
-        read_input(
-            &mut self.noise,
-            &mut self.read_buf,
-            &mut self.noise_buf,
-            self.noise_gain,
-        )?;
+        self.noise.frame(&mut self.noise_buf)?;
+        for x in &mut self.noise_buf {
+            *x *= self.noise_gain;
+        }
         Ok(())
     }
 
     /// Returns the strength of the signal (before applying gain).
     fn read_signal(&mut self) -> Result<f32> {
-        read_input(
-            &mut self.signal,
-            &mut self.read_buf,
-            &mut self.sig_buf,
-            self.signal_gain,
-        )
-        .map_err(Into::into)
+        self.signal.frame(&mut self.sig_buf)?;
+        let mut energy = 0.0;
+        for x in &mut self.sig_buf {
+            energy += *x * *x;
+            *x *= self.signal_gain;
+        }
+        Ok(energy)
     }
 
     fn randomize(&mut self) {
