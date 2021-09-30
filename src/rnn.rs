@@ -137,10 +137,9 @@ impl RnnModel {
             rows: usize,
             cols: usize,
         ) -> Result<Vec<i8>, ReadModelError> {
-            // The array is stored in column-major format, and we want to convert it to row-major.
             let mut ret = vec![0; rows * cols];
-            for j in 0..cols {
-                for i in 0..rows {
+            for i in 0..rows {
+                for j in 0..cols {
                     ret[i * cols + j] = int()?;
                 }
             }
