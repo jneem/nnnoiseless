@@ -94,6 +94,18 @@ fn main() -> Result<()> {
     let mut output = Vec::<f32>::new();
     let signal_reader = SignalReader::new(signal_paths, count);
     let noise_reader = SignalReader::new(noise_paths, count);
+
+    eprintln!(
+        "Found {} clean files, reading about {} frames from each",
+        signal_reader.paths.len(),
+        signal_reader.frames_per_file
+    );
+    eprintln!(
+        "Found {} noise files, reading about {} frames from each",
+        noise_reader.paths.len(),
+        noise_reader.frames_per_file
+    );
+
     let mut sim = NoiseSimulator::new(signal_reader, noise_reader);
 
     let mut clean_features = DenoiseFeatures::new();
@@ -192,7 +204,11 @@ impl SignalReader {
                 || spec.bits_per_sample != 16
                 || spec.sample_format != hound::SampleFormat::Int
             {
-                anyhow::bail!("unsupported wav format {:?}", spec);
+                anyhow::bail!(
+                    "unsupported wav format {:?} in {}",
+                    spec,
+                    self.paths[self.cur_idx].to_string_lossy()
+                );
             }
 
             // We want num_samples samples, and the file has len samples. If the file is big
