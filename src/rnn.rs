@@ -94,13 +94,159 @@ impl std::fmt::Display for ReadModelError {
 impl std::error::Error for ReadModelError {}
 
 impl RnnModel {
-    /// Reads an `RnnModel` from a `std::io::Read`.
+    /// Reads an `RnnModel` from an array of bytes, in the format produced by the
+    /// `nnnoiseless` training scripts.
+    pub fn from_bytes(bytes: &[i8]) -> Result<RnnModel, ReadModelError> {
+        RnnModel::from_bytes_impl(bytes, |xs| Cow::Owned(xs.to_owned()))
+    }
+
+    fn frow_static_bytes(bytes: &'static [i8]) -> Result<RnnModel, ReadModelError> {
+        RnnModel::from_bytes_impl(bytes, |xs| Cow::Borrowed(xs))
+    }
+
+    /// Reads an `RnnModel` from an array of bytes, in our new nnnoiseless format.
+    ///
+    /// The format is simple: each NN layer is represented by an array of signed `i8`'s,
+    /// and these layers as simply concatenated.
+    ///
+    /// The format for a dense layer is
+    /// <nb_neurons> <nb_inputs> <activation>
+    /// <weights...>
+    /// <bias...>
+    /// where each of the <?> terms represents a single integer, and each of the <?...> terms
+    /// represents an array of integers of the appropriate length (`weights` has length
+    /// `nb_neurons * nb_inputs` and `bias` has length `nb_neurons`).
+    ///
+    /// The format for a GRU layer is
+    /// <nb_neurons> <nb_inputs> <activation>
+    /// <input_weights...>
+    /// <recurrent_weights...>
+    /// <bias...>
+    /// where `input_weights` and `recurrent_weights` have length `3 * nb_inputs * nb_neurons` each,
+    /// and `bias` has length `3 * nb_neurons`.
+    fn from_bytes_impl<'a>(
+        bytes: &'a [i8],
+        moo: fn(&'a [i8]) -> Cow<'static, [i8]>,
+    ) -> Result<RnnModel, ReadModelError> {
+        let read_array =
+            |bytes: &'a [i8], len: usize| -> Result<(Cow<'static, [i8]>, &[i8]), ReadModelError> {
+                if bytes.len() >= len {
+                    Ok((moo(&bytes[..len]), &bytes[len..]))
+                } else {
+                    Err(ReadModelError::CorruptFile)
+                }
+            };
+
+        fn unsigned(b: i8) -> Result<usize, ReadModelError> {
+            if b >= 0 {
+                Ok(b as usize)
+            } else {
+                Err(ReadModelError::CorruptFile)
+            }
+        }
+
+        fn act(x: i8) -> Result<Activation, ReadModelError> {
+            match x {
+                0 => Ok(Activation::Tanh),
+                1 => Ok(Activation::Sigmoid),
+                2 => Ok(Activation::Relu),
+                _ => Err(ReadModelError::CorruptFile),
+            }
+        }
+
+        let read_dense = |bytes: &'a [i8]| -> Result<(DenseLayer, &[i8]), ReadModelError> {
+            if bytes.len() < 3 {
+                return Err(ReadModelError::CorruptFile);
+            }
+
+            let nb_inputs = unsigned(bytes[0])?;
+            let nb_neurons = unsigned(bytes[1])?;
+            let activation = act(bytes[2])?;
+            let (input_weights, bytes) = read_array(&bytes[3..], nb_neurons * nb_inputs)?;
+            let (bias, bytes) = read_array(bytes, nb_neurons)?;
+
+            let layer = DenseLayer {
+                nb_inputs,
+                nb_neurons,
+                input_weights: input_weights.into(),
+                bias: bias.into(),
+                activation,
+            };
+            Ok((layer, bytes))
+        };
+
+        let read_gru = |bytes: &'a [i8]| -> Result<(GruLayer, &[i8]), ReadModelError> {
+            if bytes.len() < 3 {
+                return Err(ReadModelError::CorruptFile);
+            }
+
+            let nb_inputs = unsigned(bytes[0])?;
+            let nb_neurons = unsigned(bytes[1])?;
+            let activation = act(bytes[2])?;
+            let (input_weights, bytes) = read_array(&bytes[3..], 3 * nb_neurons * nb_inputs)?;
+            let (recurrent_weights, bytes) = read_array(bytes, 3 * nb_neurons * nb_inputs)?;
+            let (bias, bytes) = read_array(bytes, 3 * nb_neurons)?;
+
+            let layer = GruLayer {
+                nb_inputs,
+                nb_neurons,
+                input_weights: input_weights.into(),
+                recurrent_weights: recurrent_weights.into(),
+                bias: bias.into(),
+                activation,
+            };
+            Ok((layer, bytes))
+        };
+
+        let (input_dense, bytes) = read_dense(bytes)?;
+        let (vad_gru, bytes) = read_gru(bytes)?;
+        let (noise_gru, bytes) = read_gru(bytes)?;
+        let (denoise_gru, bytes) = read_gru(bytes)?;
+        let (denoise_output, bytes) = read_dense(bytes)?;
+        let (vad_output, bytes) = read_dense(bytes)?;
+
+        if !bytes.is_empty() {
+            return Err(ReadModelError::CorruptFile);
+        }
+
+        // The input to the first layer must be of size 42, because that's how many features
+        // there are. The denoise output must be of size 22, and the vad output must be of size 1.
+        // Other than that, the output of one layer must match with the inputs of the following
+        // layer.
+        if input_dense.nb_inputs != 42
+            || denoise_output.nb_neurons != 22
+            || vad_output.nb_neurons != 1
+        {
+            return Err(ReadModelError::CorruptFile);
+        }
+        if input_dense.nb_neurons != vad_gru.nb_inputs || vad_gru.nb_neurons != vad_output.nb_inputs
+        {
+            return Err(ReadModelError::CorruptFile);
+        }
+        if 42 + input_dense.nb_neurons + vad_gru.nb_neurons != denoise_gru.nb_inputs {
+            return Err(ReadModelError::CorruptFile);
+        }
+        if denoise_gru.nb_neurons != denoise_output.nb_inputs {
+            return Err(ReadModelError::CorruptFile);
+        }
+
+        Ok(RnnModel {
+            input_dense,
+            vad_gru,
+            noise_gru,
+            denoise_gru,
+            denoise_output,
+            vad_output,
+        })
+    }
+
+    /// Reads an `RnnModel` from a `std::io::Read`, in the format used by [`RNNoise`].
     ///
     /// The file format of an `RnnModel` is not specified anywhere; it should have been generated
-    /// from the `dump_rnn.py` script in the [`RNNoise` repository].
+    /// from the `dump_rnn.py` script in the `RNNoise` repository.
     ///
     /// [`RNNoise`]: https://github.com/xiph/rnnoise
-    pub fn from_read<R: std::io::Read>(mut r: R) -> Result<RnnModel, ReadModelError> {
+    pub fn from_rnnoise<R: std::io::Read>(mut r: R) -> Result<RnnModel, ReadModelError> {
         let mut data = String::new();
         r.read_to_string(&mut data)?;
 
