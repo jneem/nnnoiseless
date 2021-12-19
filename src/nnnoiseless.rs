@@ -320,7 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let model = if let Some(model_path) = matches.value_of("model") {
-        RnnModel::from_read(BufReader::new(
+        RnnModel::from_rnnoise(BufReader::new(
             File::open(model_path).context("Failed to open model file")?,
         ))
         .context("Failed to read model file")?
