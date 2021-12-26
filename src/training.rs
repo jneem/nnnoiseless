@@ -5,13 +5,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{crate_version, App, Arg};
 use hound::WavReader;
-use ndarray::s;
 use rand::seq::SliceRandom;
 use rand::Rng;
 
 use nnnoiseless::features::DenoiseFeatures;
 use nnnoiseless::util::zip3;
-use nnnoiseless::util::{Biquad, BIQUAD_HP};
+use nnnoiseless::util::Biquad;
 use nnnoiseless::{NB_BANDS, NB_FEATURES};
 
 // After this many frames, we re-randomize the gains and the filters.
@@ -89,7 +88,10 @@ fn main() -> Result<()> {
     let out_name = matches.value_of("output").unwrap();
     let out_file = hdf5::File::create(out_name).context("failed to open output file")?;
     let (width, height) = (NB_FEATURES + 2 * NB_BANDS + 1, count);
-    let dataset = hdf5::DatasetBuilder::<f32>::new(&out_file).create("data", (height, width))?;
+    let dataset = hdf5::DatasetBuilder::new(&out_file)
+        .empty::<f32>()
+        .shape((height, width))
+        .create("data")?;
     // A buffer containing just enough output for a single frame.
     let mut output = Vec::<f32>::new();
     let signal_reader = SignalReader::new(signal_paths, count);
@@ -120,9 +122,9 @@ fn main() -> Result<()> {
             eprint!("{}\r", i);
         }
         let frame = sim.next_frame()?;
-        clean_features.shift_input(frame.signal);
-        noise_features.shift_input(frame.noise);
-        comb_features.shift_input(frame.combined);
+        clean_features.shift_and_filter_input(frame.signal);
+        noise_features.shift_and_filter_input(frame.noise);
+        comb_features.shift_and_filter_input(frame.combined);
 
         // TODO: we don't need to actually compute the full frame features -- we only need the
         // Fourier transform and band energies.
@@ -133,7 +135,7 @@ fn main() -> Result<()> {
         comb_features.pitch_filter(&gains);
 
         let band_gain_cutoff = if silence { 0 } else { frame.band_gain_cutoff };
-        for i in 0..band_gain_cutoff {
+        for i in 0..NB_BANDS {
             gains[i] = if clean_features.ex[i] < 5e-2 && comb_features.ex[i] < 5e-2 {
                 -1.0
             } else {
@@ -141,9 +143,6 @@ fn main() -> Result<()> {
                     .sqrt()
                     .min(1.0)
             };
-        }
-        for i in band_gain_cutoff..NB_BANDS {
-            gains[i] = -1.0;
         }
 
         for (nl, ne) in noise_level.iter_mut().zip(&noise_features.ex) {
@@ -154,11 +153,11 @@ fn main() -> Result<()> {
         output.extend_from_slice(&gains[..]);
         output.extend_from_slice(&noise_level[..]);
         output.extend_from_slice(&[frame.vad][..]);
-        dataset.write_slice(&output[..], s![i, 0..width])?;
+        dataset.write_slice(&output[..], (i, ..))?;
         output.clear();
     }
     out_file.flush()?;
-    out_file.close();
+    out_file.close()?;
 
     Ok(())
 }
@@ -268,8 +267,6 @@ struct NoiseSimulator {
     noise_buf: Vec<f32>,
     out_buf: Vec<f32>,
 
-    signal_hp_mem: [f32; 2],
-    noise_hp_mem: [f32; 2],
     signal_resp_mem: [f32; 2],
     noise_resp_mem: [f32; 2],
 }
@@ -388,10 +385,8 @@ impl NoiseSimulator {
         self.read_noise()?;
         let sig_e = self.read_signal()?;
 
-        BIQUAD_HP.filter_in_place(&mut self.sig_buf[..], &mut self.signal_hp_mem);
         self.sig_filter
             .filter_in_place(&mut self.sig_buf[..], &mut self.signal_resp_mem);
-        BIQUAD_HP.filter_in_place(&mut self.noise_buf[..], &mut self.noise_hp_mem);
         self.noise_filter
             .filter_in_place(&mut self.noise_buf[..], &mut self.noise_resp_mem);
 
