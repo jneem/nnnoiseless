@@ -15,11 +15,10 @@ import numpy as np
 def append_vector(bs, vector):
     vector = np.reshape(vector, (-1))
     # Weights should be in the range -0.5, 0.5; we convert that to a byte in range(0, 256)
+    # FIXME: two complement?
     v = [np.clip(int(round(256 * (x + 0.5))), 0, 255) for x in vector]
+    print(f"len: {len(v)}");
     bs.extend(v)
-
-def append_ints(bs, xs):
-    bs.extend([x + 128 for x in xs])
 
 def activation(layer):
     name = re.search('function (.*) at', str(layer.activation)).group(1).upper()
@@ -40,7 +39,8 @@ def append_layer(bs, layer):
         # This is a GRU layer.
         nb_neurons = int(nb_neurons / 3)
 
-    append_ints(bs, [nb_inputs, nb_neurons, act])
+    print([nb_inputs, nb_neurons, act])
+    bs.extend([nb_inputs, nb_neurons, act])
     for i in range(0, len(weights)):
         append_vector(bs, weights[i])
 

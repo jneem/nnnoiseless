@@ -320,10 +320,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let model = if let Some(model_path) = matches.value_of("model") {
+        let data = std::fs::read(model_path).context("Failed to open model file")?;
+        // FIXME: eventually, there will be a safe way to cast this, right?
+        let data_i8: &[i8] =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const i8, data.len()) };
+
+        RnnModel::from_bytes(data_i8).context("Failed to parse model file")?
+        /* FIXME: support both
         RnnModel::from_rnnoise(BufReader::new(
             File::open(model_path).context("Failed to open model file")?,
         ))
         .context("Failed to read model file")?
+        */
     } else {
         RnnModel::default()
     };

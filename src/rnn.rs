@@ -100,7 +100,7 @@ impl RnnModel {
         RnnModel::from_bytes_impl(bytes, |xs| Cow::Owned(xs.to_owned()))
     }
 
-    fn frow_static_bytes(bytes: &'static [i8]) -> Result<RnnModel, ReadModelError> {
+    fn from_static_bytes(bytes: &'static [i8]) -> Result<RnnModel, ReadModelError> {
         RnnModel::from_bytes_impl(bytes, |xs| Cow::Borrowed(xs))
     }
 
@@ -138,7 +138,7 @@ impl RnnModel {
             };
 
         fn unsigned(b: i8) -> Result<usize, ReadModelError> {
-            if b >= 0 {
+            if dbg!(b) >= 0 {
                 Ok(b as usize)
             } else {
                 Err(ReadModelError::CorruptFile)
@@ -162,6 +162,7 @@ impl RnnModel {
             let nb_inputs = unsigned(bytes[0])?;
             let nb_neurons = unsigned(bytes[1])?;
             let activation = act(bytes[2])?;
+            dbg!(nb_inputs, nb_neurons, activation);
             let (input_weights, bytes) = read_array(&bytes[3..], nb_neurons * nb_inputs)?;
             let (bias, bytes) = read_array(bytes, nb_neurons)?;
 
@@ -183,8 +184,9 @@ impl RnnModel {
             let nb_inputs = unsigned(bytes[0])?;
             let nb_neurons = unsigned(bytes[1])?;
             let activation = act(bytes[2])?;
+            dbg!(nb_inputs, nb_neurons, activation);
             let (input_weights, bytes) = read_array(&bytes[3..], 3 * nb_neurons * nb_inputs)?;
-            let (recurrent_weights, bytes) = read_array(bytes, 3 * nb_neurons * nb_inputs)?;
+            let (recurrent_weights, bytes) = read_array(bytes, 3 * nb_neurons * nb_neurons)?;
             let (bias, bytes) = read_array(bytes, 3 * nb_neurons)?;
 
             let layer = GruLayer {
@@ -198,6 +200,7 @@ impl RnnModel {
             Ok((layer, bytes))
         };
 
+        dbg!(bytes.len());
         let (input_dense, bytes) = read_dense(bytes)?;
         let (vad_gru, bytes) = read_gru(bytes)?;
         let (noise_gru, bytes) = read_gru(bytes)?;
@@ -223,7 +226,10 @@ impl RnnModel {
         {
             return Err(ReadModelError::CorruptFile);
         }
-        if 42 + input_dense.nb_neurons + vad_gru.nb_neurons != denoise_gru.nb_inputs {
+        if 42 + input_dense.nb_neurons + vad_gru.nb_neurons != noise_gru.nb_inputs {
+            return Err(ReadModelError::CorruptFile);
+        }
+        if 42 + vad_gru.nb_neurons + noise_gru.nb_neurons != denoise_gru.nb_inputs {
             return Err(ReadModelError::CorruptFile);
         }
         if denoise_gru.nb_neurons != denoise_output.nb_inputs {
