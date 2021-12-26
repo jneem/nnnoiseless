@@ -266,6 +266,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .help("path to a custom model file")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("rnnoise-model")
+                .long("rnnoise-model")
+                .help("path to a custom model file")
+                .takes_value(true),
+        )
         .get_matches();
 
     let in_name = matches.value_of("INPUT").unwrap();
@@ -326,15 +332,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             unsafe { std::slice::from_raw_parts(data.as_ptr() as *const i8, data.len()) };
 
         RnnModel::from_bytes(data_i8).context("Failed to parse model file")?
-        /* FIXME: support both
-        RnnModel::from_rnnoise(BufReader::new(
-            File::open(model_path).context("Failed to open model file")?,
-        ))
-        .context("Failed to read model file")?
-        */
     } else {
         RnnModel::default()
     };
+
     let channels = channels as usize;
     let mut in_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
     let mut out_bufs = vec![vec![0.0; FRAME_SIZE]; channels];

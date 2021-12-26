@@ -138,7 +138,7 @@ impl RnnModel {
             };
 
         fn unsigned(b: i8) -> Result<usize, ReadModelError> {
-            if dbg!(b) >= 0 {
+            if b >= 0 {
                 Ok(b as usize)
             } else {
                 Err(ReadModelError::CorruptFile)
@@ -162,7 +162,6 @@ impl RnnModel {
             let nb_inputs = unsigned(bytes[0])?;
             let nb_neurons = unsigned(bytes[1])?;
             let activation = act(bytes[2])?;
-            dbg!(nb_inputs, nb_neurons, activation);
             let (input_weights, bytes) = read_array(&bytes[3..], nb_neurons * nb_inputs)?;
             let (bias, bytes) = read_array(bytes, nb_neurons)?;
 
@@ -184,7 +183,6 @@ impl RnnModel {
             let nb_inputs = unsigned(bytes[0])?;
             let nb_neurons = unsigned(bytes[1])?;
             let activation = act(bytes[2])?;
-            dbg!(nb_inputs, nb_neurons, activation);
             let (input_weights, bytes) = read_array(&bytes[3..], 3 * nb_neurons * nb_inputs)?;
             let (recurrent_weights, bytes) = read_array(bytes, 3 * nb_neurons * nb_neurons)?;
             let (bias, bytes) = read_array(bytes, 3 * nb_neurons)?;
@@ -200,7 +198,6 @@ impl RnnModel {
             Ok((layer, bytes))
         };
 
-        dbg!(bytes.len());
         let (input_dense, bytes) = read_dense(bytes)?;
         let (vad_gru, bytes) = read_gru(bytes)?;
         let (noise_gru, bytes) = read_gru(bytes)?;
