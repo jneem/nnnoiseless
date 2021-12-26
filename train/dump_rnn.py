@@ -14,17 +14,23 @@ import numpy as np
 
 def append_vector(bs, vector):
     vector = np.reshape(vector, (-1))
-    # Weights should be in the range -0.5, 0.5; we convert that to a byte in range(0, 256)
-    # FIXME: two complement?
-    v = [np.clip(int(round(256 * (x + 0.5))), 0, 255) for x in vector]
-    print(f"len: {len(v)}");
+    # Weights should be in the range -0.5, 0.5; we convert that to a signed byte. It seems like the
+    # python bytearray only likes unsigned bytes, so we need to compute the unsigned twos-complement representation
+    # of the signed byte we actually want.
+    def b(x):
+        y = np.clip(int(round(256 * x)), -128, 127)
+        if y < 0:
+            y = 256 + y
+        return y
+
+    v = [b(x) for x in vector]
     bs.extend(v)
 
 def activation(layer):
     name = re.search('function (.*) at', str(layer.activation)).group(1).upper()
     if name == 'SIGMOID':
         return 1
-    elif activation == 'RELU':
+    elif name == 'RELU':
         return 2
     else:
         return 0
