@@ -305,8 +305,6 @@ impl NoiseSimulator {
             noise_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
             out_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
 
-            signal_hp_mem: [0.0, 0.0],
-            noise_hp_mem: [0.0, 0.0],
             signal_resp_mem: [0.0, 0.0],
             noise_resp_mem: [0.0, 0.0],
         }
