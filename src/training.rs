@@ -132,10 +132,8 @@ fn main() -> Result<()> {
         noise_features.compute_frame_features();
 
         let silence = comb_features.compute_frame_features();
-        comb_features.pitch_filter(&gains);
-
         let band_gain_cutoff = if silence { 0 } else { frame.band_gain_cutoff };
-        for i in 0..NB_BANDS {
+        for i in 0..band_gain_cutoff {
             gains[i] = if clean_features.ex[i] < 5e-2 && comb_features.ex[i] < 5e-2 {
                 -1.0
             } else {
@@ -144,11 +142,16 @@ fn main() -> Result<()> {
                     .min(1.0)
             };
         }
+        for i in band_gain_cutoff..NB_BANDS {
+            gains[i] = -1.0;
+        }
 
         for (nl, ne) in noise_level.iter_mut().zip(&noise_features.ex) {
             *nl = (*ne + 1e-2).log10();
         }
 
+        // NOTE: the training doesn't actually seem to use the noise level. We can remove it (as
+        // long as we also update the training script).
         output.extend_from_slice(comb_features.features());
         output.extend_from_slice(&gains[..]);
         output.extend_from_slice(&noise_level[..]);
@@ -190,40 +193,46 @@ impl SignalReader {
         }
     }
 
-    fn frame(&mut self, buf: &mut [f32]) -> Result<()> {
-        if self.reader.is_none() {
-            if self.cur_idx >= self.paths.len() {
-                self.cur_idx = 0;
-            }
-            let mut reader = WavReader::open(&self.paths[self.cur_idx])?;
+    fn next_reader(&mut self) -> Result<()> {
+        if self.cur_idx >= self.paths.len() {
+            self.cur_idx = 0;
+        }
+        let mut reader = WavReader::open(&self.paths[self.cur_idx])?;
 
-            let spec = reader.spec();
-            if spec.channels != 1
-                || spec.sample_rate != 48_000
-                || spec.bits_per_sample != 16
-                || spec.sample_format != hound::SampleFormat::Int
-            {
-                anyhow::bail!(
-                    "unsupported wav format {:?} in {}",
-                    spec,
-                    self.paths[self.cur_idx].to_string_lossy()
-                );
-            }
+        let spec = reader.spec();
+        if spec.channels != 1
+            || spec.sample_rate != 48_000
+            || spec.bits_per_sample != 16
+            || spec.sample_format != hound::SampleFormat::Int
+        {
+            anyhow::bail!(
+                "unsupported wav format {:?} in {}",
+                spec,
+                self.paths[self.cur_idx].to_string_lossy()
+            );
+        }
 
-            // We want num_samples samples, and the file has len samples. If the file is big
-            // enough, take a random slice of it.
-            let len = reader.duration() as usize;
-            let num_samples = nnnoiseless::FRAME_SIZE * self.frames_per_file;
-            if len > num_samples {
-                reader
-                    .seek(rand::thread_rng().gen_range(0..=(len - num_samples) as u32))
-                    .context(format!("failed to seek in {:?}", self.paths[self.cur_idx]))?;
-                self.frames_left = self.frames_per_file;
-            } else {
-                self.frames_left = len / nnnoiseless::FRAME_SIZE;
-                // FIXME: give a sane warning if the file is too small for a single frame
-            }
+        // We want num_samples samples, and the file has len samples. If the file is big
+        // enough, take a random slice of it.
+        let len = reader.duration() as usize;
+        let num_samples = nnnoiseless::FRAME_SIZE * self.frames_per_file;
+        if len > num_samples {
+            reader
+                .seek(rand::thread_rng().gen_range(0..=(len - num_samples) as u32))
+                .context(format!("failed to seek in {:?}", self.paths[self.cur_idx]))?;
+            self.frames_left = self.frames_per_file;
+        } else {
+            self.frames_left = len / nnnoiseless::FRAME_SIZE;
+        }
+        if self.frames_left > 0 {
             self.reader = Some(reader);
+        }
+        Ok(())
+    }
+
+    fn frame(&mut self, buf: &mut [f32]) -> Result<()> {
+        while self.reader.is_none() {
+            self.next_reader()?;
         }
 
         let r = self.reader.as_mut().unwrap();
@@ -332,11 +341,13 @@ impl NoiseSimulator {
     fn randomize(&mut self) {
         let mut rng = rand::thread_rng();
         self.signal_gain = 10.0_f32.powf(rng.gen_range(-40..20) as f32 / 20.0);
-        self.noise_gain = 10.0_f32.powf(rng.gen_range(-30..20) as f32 / 20.0);
+        self.noise_gain = 10.0_f32.powf(rng.gen_range(-20..20) as f32 / 20.0);
         self.noise_gain *= self.signal_gain;
+        /*
         if rng.gen_bool(0.1) {
             self.noise_gain = 0.0;
         }
+        */
         if rng.gen_bool(0.1) {
             self.signal_gain = 0.0;
         }
