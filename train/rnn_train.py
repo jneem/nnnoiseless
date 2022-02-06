@@ -102,14 +102,26 @@ noise_train = np.reshape(noise_train, (nb_sequences, window_size, 22))
 vad_train = np.copy(all_data[:nb_sequences*window_size, 86:87])
 vad_train = np.reshape(vad_train, (nb_sequences, window_size, 1))
 
+
+# In order to ensure that the various noise levels are evenly represented, we reweight the samples
+# so that low-gain, high-gain and medium-gain samples get the same total weight.
+# TODO: in the feature-generation step, ensure there are no samples where all the y's are -1.
+y = all_data[:nb_sequences*window_size, 42:64]
+y_means = np.mean(y, axis=1, where=(y != -1))
+hi = y_means > 2/3
+lo = y_means < 1/3
+med = (y_means >= 1/3) & (y_means <= 2/3)
+total = np.sum(~np.isnan(hi))
+train_weights = (hi * (total / np.sum(hi)) + med * (total / np.sum(med)) + lo * (total / np.sum(lo))) / 3
+train_weights = np.reshape(train_weights, (nb_sequences, window_size))
+
 all_data = 0;
-#x_train = x_train.astype('float32')
-#y_train = y_train.astype('float32')
 
 print(len(x_train), 'train sequences. x shape =', x_train.shape, 'y shape = ', y_train.shape)
 
 print('Train...')
 model.fit(x_train, [y_train, vad_train],
+          sample_weight=train_weights,
           batch_size=batch_size,
           epochs=120,
           validation_split=0.1)
