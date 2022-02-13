@@ -21,6 +21,8 @@ from keras.constraints import Constraint
 from keras import backend as K
 import numpy as np
 
+from dump_rnn import dump_model
+
 #import tensorflow as tf
 #from keras.backend.tensorflow_backend import set_session
 #config = tf.ConfigProto()
@@ -123,6 +125,11 @@ print('Train...')
 model.fit(x_train, [y_train, vad_train],
           sample_weight=train_weights,
           batch_size=batch_size,
-          epochs=120,
+          epochs=20,
           validation_split=0.1)
+
+print('Saving keras model to "weights.hdf5"')
 model.save("weights.hdf5")
+
+print('Saving nnnoiseless weights to "weights.rnn"')
+dump_model(model, "weights.rnn")
