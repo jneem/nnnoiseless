@@ -32,8 +32,6 @@ use crate::{RnnModel, FRAME_SIZE, FREQ_SIZE, NB_BANDS};
 /// ```
 #[derive(Clone)]
 pub struct DenoiseState<'model> {
-    /// State for the high-pass filter we apply to the input.
-    mem_hp_x: [f32; 2],
     /// Most recent gains that we applied.
     lastg: [f32; crate::NB_BANDS],
     rnn: crate::rnn::RnnState<'model>,
