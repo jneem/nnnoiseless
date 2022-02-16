@@ -100,7 +100,12 @@ impl RnnModel {
         RnnModel::from_bytes_impl(bytes, |xs| Cow::Owned(xs.to_owned()))
     }
 
-    fn from_static_bytes(bytes: &'static [i8]) -> Result<RnnModel, ReadModelError> {
+    /// Reads an `RnnModel` from a static array of bytes, in the format produced by the
+    /// `nnnoiseless` training scripts.
+    ///
+    /// This differs from [`RnnModel::from_bytes`] in that the returned model doesn't need to
+    /// allocate its own byte buffers; it will just store references to the provided `bytes` array.
+    pub fn from_static_bytes(bytes: &'static [i8]) -> Result<RnnModel, ReadModelError> {
         RnnModel::from_bytes_impl(bytes, |xs| Cow::Borrowed(xs))
     }
 
