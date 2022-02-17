@@ -72,7 +72,6 @@ impl<'model> DenoiseState<'model> {
 
     pub(crate) fn from_model_owned(model: Cow<'model, RnnModel>) -> DenoiseState<'model> {
         DenoiseState {
-            mem_hp_x: [0.0; 2],
             lastg: [0.0; NB_BANDS],
             rnn: crate::rnn::RnnState::new(model),
             feat: crate::features::DenoiseFeatures::new(),
