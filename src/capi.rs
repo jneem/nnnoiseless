@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::Read;
 use std::os::raw::{c_float, c_int};
 
 use libc::FILE;
@@ -93,10 +93,14 @@ pub unsafe extern "C" fn rnnoise_model_from_file(file: *mut FILE) -> *mut RNNMod
     let fd = dup(fileno(file));
     fclose(file);
 
-    let file = File::from_raw_fd(fd);
-    match crate::RnnModel::from_read(BufReader::new(file)) {
-        Ok(model) => Box::into_raw(Box::new(RNNModel(model))),
-        Err(_) => std::ptr::null_mut(),
+    let mut file = File::from_raw_fd(fd);
+    let mut data = Vec::new();
+    if file.read_to_end(&mut data).is_err() {
+        return std::ptr::null_mut();
+    }
+    match crate::RnnModel::from_bytes(&data) {
+        Some(model) => Box::into_raw(Box::new(RNNModel(model))),
+        None => std::ptr::null_mut(),
     }
 }
 
