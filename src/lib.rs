@@ -22,7 +22,6 @@ mod util;
 
 mod denoise;
 mod fft;
-mod model;
 mod pitch;
 mod rnn;
 
