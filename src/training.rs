@@ -3,14 +3,14 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{crate_version, App, Arg};
+use clap::{crate_version, Arg, Command};
 use hound::WavReader;
 use rand::seq::SliceRandom;
 use rand::Rng;
 
-use nnnoiseless::features::DenoiseFeatures;
 use nnnoiseless::util::zip3;
 use nnnoiseless::util::Biquad;
+use nnnoiseless::DenoiseFeatures;
 use nnnoiseless::{NB_BANDS, NB_FEATURES};
 
 // After this many frames, we re-randomize the gains and the filters.
@@ -28,40 +28,40 @@ fn glob_paths<'a>(globs: impl Iterator<Item = &'a str>) -> Result<Vec<PathBuf>> 
 }
 
 fn main() -> Result<()> {
-    let matches = App::new("nnnoiseless-gen-training-data")
+    let matches = Command::new("nnnoiseless-gen-training-data")
         .version(crate_version!())
         .about("Generate data for training nnnoiseless models")
         .arg(
-            Arg::with_name("signal-glob")
+            Arg::new("signal-glob")
                 .help("wildcard for audio signal data")
                 .long("signal-glob")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_occurrences(true)
                 .required(true),
         )
         .arg(
-            Arg::with_name("noise-glob")
+            Arg::new("noise-glob")
                 .help("wildcard for audio noise data")
                 .long("noise-glob")
                 .takes_value(true)
-                .multiple(true)
+                .multiple_occurrences(true)
                 .required(true),
         )
         .arg(
-            Arg::with_name("shuffle")
+            Arg::new("shuffle")
                 .help("if set, shuffle the signal and noise files")
                 .long("shuffle"),
         )
         .arg(
-            Arg::with_name("count")
+            Arg::new("count")
                 .help("number of frames to generate")
                 .long("count")
                 .takes_value(true)
                 .required(true),
         )
         .arg(
-            Arg::with_name("output")
-                .short("o")
+            Arg::new("output")
+                .short('o')
                 .takes_value(true)
                 .help("output file (defaults to stdout)")
                 .required(true),
