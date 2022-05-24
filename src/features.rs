@@ -2,7 +2,7 @@
 //!
 //! This module contains utilities for computing features of an audio signal. These features are
 //! used in two ways: they can be fed into a trained neural net for noise removal and speech
-//! detection, or when the `train` feature is enabled then can be collected and used to train new
+//! detection, or when the `train` feature is enabled they can be collected and used to train new
 //! neural nets.
 
 use crate::{
@@ -10,7 +10,9 @@ use crate::{
     PITCH_BUF_SIZE, WINDOW_SIZE,
 };
 
-/// Contains the necessary state to compute the features of audio input, and synthesize the output.
+/// Contains the necessary state to compute the features of audio input and synthesize the output.
+///
+/// This is quite a large struct and should probably be kept behind some kind of pointer.
 #[derive(Clone)]
 pub struct DenoiseFeatures {
     /// This stores some of the previous input. Currently, whenever we get new input we shift this
@@ -31,11 +33,11 @@ pub struct DenoiseFeatures {
     pub x: [Complex; FREQ_SIZE],
     /// The Fourier transform of a pitch-period-shifted window of input.
     pub p: [Complex; FREQ_SIZE],
-    /// The band energies of `x`.
+    /// The band energies of `x` (the signal).
     pub ex: [f32; NB_BANDS],
-    /// The band energies of `p`.
+    /// The band energies of `p` (the signal, lagged by one pitch period).
     pub ep: [f32; NB_BANDS],
-    /// The band correlations between `x` and `p`.
+    /// The band correlations between `x` (the signal) and `p` (the pitch-period-lagged signal).
     pub exp: [f32; NB_BANDS],
     /// The computed features.
     features: [f32; NB_FEATURES],
@@ -77,9 +79,9 @@ impl DenoiseFeatures {
         &self.features[..]
     }
 
-    #[cfg(feature = "train")]
-    /// Shifts our input buffer and adds the new input to it. This is only used for generating
-    /// training data, because in normal use we apply a biquad filter while adding the new input.
+    /// Shifts our input buffer and adds the new input to it. This is mainly used when generating
+    /// training data: when running the noise reduction we use [`DenoiseFeatures::shift_and_filter_input`]
+    /// instead.
     pub fn shift_input(&mut self, input: &[f32]) {
         assert!(input.len() == FRAME_SIZE);
         let new_idx = self.input_mem.len() - FRAME_SIZE;
@@ -109,12 +111,6 @@ impl DenoiseFeatures {
     }
 
     /// Computes the features of the current frame.
-    ///
-    /// - `x` is the Fourier transform of the input, and `ex` are its band energies
-    /// - `p` is the Fourier transform of older input, with a lag of the pitch period; `ep` are its band
-    ///     energies
-    /// - `exp` is the band correlation between `x` and `p`
-    /// - `features` are all the features of that get input to the neural network.
     ///
     /// The return value is `true` if the input was pretty much silent.
     pub fn compute_frame_features(&mut self) -> bool {

@@ -11,21 +11,19 @@ use once_cell::sync::OnceCell;
 mod capi;
 
 #[cfg(feature = "train")]
-pub mod features;
-#[cfg(feature = "train")]
 pub mod util;
 
-#[cfg(not(feature = "train"))]
-mod features;
 #[cfg(not(feature = "train"))]
 mod util;
 
 mod denoise;
+mod features;
 mod fft;
 mod pitch;
 mod rnn;
 
 pub use denoise::DenoiseState;
+pub use features::DenoiseFeatures;
 pub use rnn::RnnModel;
 
 #[doc(hidden)]
