@@ -1,10 +1,9 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::Path;
-use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Error};
-use clap::{crate_version, App, Arg};
+use clap::{arg, crate_version, Command};
 use dasp_interpolate::{sinc::Sinc, Interpolator};
 use dasp_ring_buffer::Fixed;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
@@ -229,50 +228,24 @@ fn wav_samples<R: Read + 'static>(wav: WavReader<R>) -> Box<dyn ReadSample> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = App::new("nnnoiseless")
-        .version(crate_version!())
-        .about("Remove noise from audio files")
-        .arg(
-            Arg::with_name("INPUT")
-                .help("input audio file")
-                .required(true),
-        )
-        .arg(
-            Arg::with_name("OUTPUT")
-                .help("output audio file")
-                .required(true),
-        )
-        .arg(Arg::with_name("wav-in").long("wav-in").help(
-            "if set, the input is a wav file (default is to detect wav files by their filename)",
-        ))
-        .arg(Arg::with_name("wav-out").long("wav-out").help(
-            "if set, the output is a wav file (default is to detect wav files by their filename)",
-        ))
-        .arg(
-            Arg::with_name("sample-rate")
-                .long("sample-rate")
-                .help("for raw input, the sample rate of the input (defaults to 48kHz)")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("channels")
-                .long("channels")
-                .help("for raw input, the number of channels (defaults to 1)")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("model")
-                .long("model")
-                .help("path to a custom model file")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("rnnoise-model")
-                .long("rnnoise-model")
-                .help("path to a custom model file")
-                .takes_value(true),
-        )
-        .get_matches();
+    let matches =
+        Command::new("nnnoiseless")
+            .version(crate_version!())
+            .about("Remove noise from audio files")
+            .arg(arg!(<INPUT> "input audio file"))
+            .arg(arg!(<OUTPUT> "output audio file"))
+            .arg(arg!(--"wav-in" "the input is a wav file (default is to detect wav files by their filename"))
+            .arg(arg!(--"wav-out" "the output is a wav file (default is to detect wav files by their filename)"))
+            .arg(arg!(--"sample-rate" <RATE> "for raw input, the sample rate of the input (defaults to 48kHz)").required(false)
+                    .validator(|s| s.parse::<f64>()),
+            )
+            .arg(
+                arg!(--channels <CHANNELS> "for raw input, the number of channels (defaults to 1)")
+                    .required(false)
+                    .validator(|s| s.parse::<u16>()),
+            )
+            .arg(arg!(--model <PATH> "path to a custom model file").required(false))
+            .get_matches();
 
     let in_name = matches.value_of("INPUT").unwrap();
     let out_name = matches.value_of("OUTPUT").unwrap();
@@ -294,15 +267,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let channels = wav_reader.spec().channels;
         (wav_samples(wav_reader), channels)
     } else {
-        // TODO: report parse errors
-        let sample_rate = matches
-            .value_of("sample-rate")
-            .and_then(|s| f64::from_str(s).ok())
-            .unwrap_or(48_000.0);
-        let channels = matches
-            .value_of("channels")
-            .and_then(|s| u16::from_str(s).ok())
-            .unwrap_or(1);
+        let sample_rate = matches.value_of_t("sample-rate").unwrap_or(48_000.0);
+        let channels = matches.value_of_t("channels").unwrap_or(1);
         (
             raw_samples(in_file, channels as usize, sample_rate),
             channels,
