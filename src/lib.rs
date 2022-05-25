@@ -16,6 +16,11 @@ pub mod util;
 #[cfg(not(feature = "train"))]
 mod util;
 
+#[cfg(feature = "dasp")]
+mod signal;
+#[cfg(feature = "dasp")]
+pub use dasp;
+
 mod denoise;
 mod features;
 mod fft;
@@ -25,6 +30,8 @@ mod rnn;
 pub use denoise::DenoiseState;
 pub use features::DenoiseFeatures;
 pub use rnn::RnnModel;
+#[cfg(feature = "dasp")]
+pub use signal::DenoiseSignal;
 
 #[doc(hidden)]
 pub const FRAME_SIZE_SHIFT: usize = 2;
@@ -183,6 +190,18 @@ mod tests {
         ret
     }
 
+    fn compare(output: &[f32], reference_output: &[i16]) {
+        assert_eq!(output.len(), reference_output.len());
+        let output = output.iter().map(|&x| x as i16).collect::<Vec<_>>();
+        let xx: f64 = output.iter().map(|&x| (x as f64).powi(2)).sum();
+        let diff: f64 = reference_output
+            .into_iter()
+            .zip(output)
+            .map(|(&x, y)| (x as f64 - y as f64).powi(2))
+            .sum();
+        assert!(diff / xx < 1e-4);
+    }
+
     #[test]
     fn compare_to_reference() {
         let reference_input = to_f32(include_bytes!("../test_data/testing.raw"));
@@ -199,14 +218,20 @@ mod tests {
             first = false;
         }
 
-        assert_eq!(output.len(), reference_output.len());
-        let output = output.into_iter().map(|x| x as i16).collect::<Vec<_>>();
-        let xx: f64 = output.iter().map(|&x| (x as f64).powi(2)).sum();
-        let diff: f64 = reference_output
-            .into_iter()
-            .zip(output)
-            .map(|(x, y)| (x as f64 - y as f64).powi(2))
-            .sum();
-        assert!(diff / xx < 1e-4);
+        compare(&output, &reference_output);
+    }
+
+    #[test]
+    fn compare_signal_to_reference() {
+        use dasp::signal::{self, Signal};
+
+        let reference_input = to_i16(include_bytes!("../test_data/testing.raw"));
+        let reference_output = to_i16(include_bytes!("../test_data/reference_output.raw"));
+        let output: Vec<f32> = DenoiseSignal::new(signal::from_iter(reference_input.into_iter()))
+            .until_exhausted()
+            .map(|x| x * 32768.0)
+            .collect();
+
+        compare(&output, &reference_output);
     }
 }

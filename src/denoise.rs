@@ -2,9 +2,12 @@ use std::borrow::Cow;
 
 use crate::{RnnModel, FRAME_SIZE, FREQ_SIZE, NB_BANDS};
 
-/// This is the main entry-point into `nnnoiseless`. It mainly contains the various memory buffers
-/// that are used while denoising. As such, this is quite a large struct, and should probably be
-/// kept behind some kind of pointer.
+/// This is the low-level entry-point into `nnnoiseless`: by using the `DenoiseState` directly,
+/// you can denoise your audio while keeping copying to a minimum. For a higher-level
+/// denoising experience, try [`DenoiseSignal`](crate::DenoiseSignal).
+///
+/// This struct directly contains various memory buffers that are used while denoising. As such,
+/// this is quite a large struct, and should probably be kept behind some kind of pointer.
 ///
 /// # Example
 ///
