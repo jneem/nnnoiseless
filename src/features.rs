@@ -6,8 +6,8 @@
 //! neural nets.
 
 use crate::{
-    common, Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
-    PITCH_BUF_SIZE, WINDOW_SIZE,
+    common, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES, PITCH_BUF_SIZE,
+    WINDOW_SIZE,
 };
 use easyfft::prelude::*;
 
@@ -30,9 +30,9 @@ pub struct DenoiseFeatures {
 
     // What follows are various buffers. The names are cryptic, but they follow a pattern.
     /// The Fourier transform of the most recent frame of input.
-    pub x: [Complex; FREQ_SIZE],
+    pub x: DynRealDft<f32>,
     /// The Fourier transform of a pitch-period-shifted window of input.
-    pub p: [Complex; FREQ_SIZE],
+    pub p: DynRealDft<f32>,
     /// The band energies of `x` (the signal).
     pub ex: [f32; NB_BANDS],
     /// The band energies of `p` (the signal, lagged by one pitch period).
@@ -63,8 +63,8 @@ impl DenoiseFeatures {
             mem_hp_x: [0.0; 2],
             synthesis_mem: [0.0; FRAME_SIZE],
             window_buf: [0.0; WINDOW_SIZE],
-            x: [Complex::from(0.0); FREQ_SIZE],
-            p: [Complex::from(0.0); FREQ_SIZE],
+            x: DynRealDft::new(0.0, &[], 0),
+            p: DynRealDft::new(0.0, &[], 0),
             ex: [0.0; NB_BANDS],
             ep: [0.0; NB_BANDS],
             exp: [0.0; NB_BANDS],
@@ -235,8 +235,16 @@ impl DenoiseFeatures {
             r[i] *= (self.ex[i] / (1e-8 + self.ep[i])).sqrt();
         }
         crate::interp_band_gain(&mut rf[..], &r[..]);
-        for i in 0..FREQ_SIZE {
-            self.x[i] += rf[i] * self.p[i];
+        let rf: &mut [f32] = &mut rf;
+        *self.x.get_offset_mut() += self.p.get_offset() * rf[0];
+        for ((x, p), rf) in self
+            .x
+            .get_frequency_bins_mut()
+            .iter_mut()
+            .zip(self.p.get_frequency_bins())
+            .zip(rf[1..].iter())
+        {
+            *x += p * rf;
         }
 
         let mut new_e = [0.0; NB_BANDS];
@@ -245,20 +253,15 @@ impl DenoiseFeatures {
             r[i] = (self.ex[i] / (1e-8 + new_e[i])).sqrt();
         }
         crate::interp_band_gain(&mut rf[..], &r[..]);
-        for i in 0..FREQ_SIZE {
-            self.x[i] *= rf[i];
-        }
+        self.x *= &*rf;
     }
 
     pub(crate) fn apply_gain(&mut self, gain: &[f32; FREQ_SIZE]) {
-        for (x, g) in self.x.iter_mut().zip(gain) {
-            *x *= *g;
-        }
+        self.x *= gain as &[f32];
     }
 
     pub(crate) fn frame_synthesis(&mut self, out: &mut [f32]) {
-        let dft = DynRealDft::new(self.x[0].re, &self.x[1..], self.window_buf.len());
-        self.window_buf.copy_from_slice(&dft.real_ifft());
+        self.window_buf.copy_from_slice(&self.x.real_ifft());
         // Not too sure why this scaling factor is introduced
         for x in &mut self.window_buf {
             *x /= 2.0;
@@ -279,19 +282,17 @@ fn transform_input(
     input: &[f32],
     lag: usize,
     window_buf: &mut [f32; WINDOW_SIZE],
-    x: &mut [Complex],
+    x: &mut DynRealDft<f32>,
     ex: &mut [f32],
 ) {
     let input = &input[input.len().checked_sub(WINDOW_SIZE + lag).unwrap()..];
     crate::apply_window(&mut window_buf[..], input);
-    x.copy_from_slice(&window_buf.real_fft());
+    *x = window_buf.real_fft();
 
     // In the original RNNoise code, the forward transform is normalized and the inverse
     // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
     let norm = common().wnorm;
-    for x in &mut x[..] {
-        *x *= norm;
-    }
+    *x *= norm;
 
     crate::compute_band_corr(ex, x, x);
 }
