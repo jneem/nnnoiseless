@@ -9,6 +9,7 @@ use crate::{
     common, Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
     PITCH_BUF_SIZE, WINDOW_SIZE,
 };
+use easyfft::prelude::*;
 
 /// Contains the necessary state to compute the features of audio input and synthesize the output.
 ///
@@ -25,7 +26,6 @@ pub struct DenoiseFeatures {
     mem_id: usize,
     mem_hp_x: [f32; 2],
     synthesis_mem: [f32; FRAME_SIZE],
-    fft: crate::fft::RealFft,
     window_buf: [f32; WINDOW_SIZE],
 
     // What follows are various buffers. The names are cryptic, but they follow a pattern.
@@ -62,7 +62,6 @@ impl DenoiseFeatures {
             mem_id: 0,
             mem_hp_x: [0.0; 2],
             synthesis_mem: [0.0; FRAME_SIZE],
-            fft: crate::fft::RealFft::new(crate::sin_cos_table()),
             window_buf: [0.0; WINDOW_SIZE],
             x: [Complex::from(0.0); FREQ_SIZE],
             p: [Complex::from(0.0); FREQ_SIZE],
@@ -118,7 +117,6 @@ impl DenoiseFeatures {
         let mut tmp = [0.0; NB_BANDS];
 
         transform_input(
-            &mut self.fft,
             &self.input_mem,
             0,
             &mut self.window_buf,
@@ -128,7 +126,6 @@ impl DenoiseFeatures {
         let pitch_idx = self.find_pitch();
 
         transform_input(
-            &mut self.fft,
             &self.input_mem,
             pitch_idx,
             &mut self.window_buf,
@@ -260,7 +257,13 @@ impl DenoiseFeatures {
     }
 
     pub(crate) fn frame_synthesis(&mut self, out: &mut [f32]) {
-        self.fft.inverse(&mut self.x, &mut self.window_buf[..]);
+        let dft = DynRealDft::new(self.x[0].re, &self.x[1..], self.window_buf.len());
+        self.window_buf.copy_from_slice(&dft.real_ifft());
+        // Not too sure why this scaling factor is introduced
+        for x in &mut self.window_buf {
+            *x /= 2.0;
+        }
+
         crate::apply_window_in_place(&mut self.window_buf[..]);
         for i in 0..FRAME_SIZE {
             out[i] = self.window_buf[i] + self.synthesis_mem[i];
@@ -273,7 +276,6 @@ impl DenoiseFeatures {
 ///
 /// The Fourier transform goes in `x` and the band energies go in `ex`.
 fn transform_input(
-    fft: &mut crate::fft::RealFft,
     input: &[f32],
     lag: usize,
     window_buf: &mut [f32; WINDOW_SIZE],
@@ -282,7 +284,7 @@ fn transform_input(
 ) {
     let input = &input[input.len().checked_sub(WINDOW_SIZE + lag).unwrap()..];
     crate::apply_window(&mut window_buf[..], input);
-    fft.forward(window_buf, x);
+    x.copy_from_slice(&window_buf.real_fft());
 
     // In the original RNNoise code, the forward transform is normalized and the inverse
     // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.

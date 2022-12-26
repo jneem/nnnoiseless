@@ -64,23 +64,6 @@ where
         .map(|(x, (y, z))| (x, y, z))
 }
 
-pub(crate) fn zip4<A, B, C, D>(
-    a: A,
-    b: B,
-    c: C,
-    d: D,
-) -> impl Iterator<Item = (A::Item, B::Item, C::Item, D::Item)>
-where
-    A: IntoIterator,
-    B: IntoIterator,
-    C: IntoIterator,
-    D: IntoIterator,
-{
-    a.into_iter()
-        .zip(b.into_iter().zip(c.into_iter().zip(d)))
-        .map(|(w, (x, (y, z)))| (w, x, y, z))
-}
-
 /// A basic high-pass filter.
 pub const BIQUAD_HP: Biquad = Biquad {
     a: [-1.99599, 0.99600],

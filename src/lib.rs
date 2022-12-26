@@ -23,7 +23,6 @@ pub use dasp;
 
 mod denoise;
 mod features;
-mod fft;
 mod pitch;
 mod rnn;
 
@@ -57,7 +56,7 @@ pub const EBAND_5MS: [usize; 22] = [
     // 0  200 400 600 800  1k 1.2 1.4 1.6  2k 2.4 2.8 3.2  4k 4.8 5.6 6.8  8k 9.6 12k 15.6 20k*/
     0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 34, 40, 48, 60, 78, 100,
 ];
-type Complex = rustfft::num_complex::Complex32;
+type Complex = easyfft::num_complex::Complex32;
 
 /// Computes the correlation between two frequency-domain signals, and aggregates the correlation
 /// into bands.
@@ -100,7 +99,6 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32]) {
 struct CommonState {
     window: [f32; WINDOW_SIZE],
     dct_table: [f32; NB_BANDS * NB_BANDS],
-    sin_cos_table: [(f32, f32); WINDOW_SIZE / 2],
     wnorm: f32,
 }
 
@@ -128,12 +126,9 @@ fn common() -> &'static CommonState {
             }
         }
 
-        let mut sin_cos_table = [(0.0, 0.0); WINDOW_SIZE / 2];
-        crate::fft::precompute_sin_cos_table(&mut sin_cos_table[..]);
         let _ = COMMON.set(CommonState {
             window,
             dct_table,
-            sin_cos_table,
             wnorm,
         });
     }
@@ -150,10 +145,6 @@ pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
         }
         out[i] = (sum as f64 * (2.0 / NB_BANDS as f64).sqrt()) as f32;
     }
-}
-
-pub(crate) fn sin_cos_table() -> &'static [(f32, f32)] {
-    &common().sin_cos_table[..]
 }
 
 fn apply_window(output: &mut [f32], input: &[f32]) {
