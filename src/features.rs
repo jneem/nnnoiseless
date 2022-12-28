@@ -6,8 +6,8 @@
 //! neural nets.
 
 use crate::{
-    common, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES, PITCH_BUF_SIZE,
-    WINDOW_SIZE,
+    common, Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
+    PITCH_BUF_SIZE, WINDOW_SIZE,
 };
 use easyfft::prelude::*;
 
@@ -63,8 +63,8 @@ impl DenoiseFeatures {
             mem_hp_x: [0.0; 2],
             synthesis_mem: [0.0; FRAME_SIZE],
             window_buf: [0.0; WINDOW_SIZE],
-            x: DynRealDft::new(0.0, &[], 0),
-            p: DynRealDft::new(0.0, &[], 0),
+            x: DynRealDft::new(0.0, &[Complex::default(); FREQ_SIZE - 1], WINDOW_SIZE),
+            p: DynRealDft::new(0.0, &[Complex::default(); FREQ_SIZE - 1], WINDOW_SIZE),
             ex: [0.0; NB_BANDS],
             ep: [0.0; NB_BANDS],
             exp: [0.0; NB_BANDS],
@@ -261,7 +261,7 @@ impl DenoiseFeatures {
     }
 
     pub(crate) fn frame_synthesis(&mut self, out: &mut [f32]) {
-        self.window_buf.copy_from_slice(&self.x.real_ifft());
+        self.x.real_ifft_using(&mut self.window_buf);
         // Not too sure why this scaling factor is introduced
         for x in &mut self.window_buf {
             *x /= 2.0;
@@ -287,7 +287,7 @@ fn transform_input(
 ) {
     let input = &input[input.len().checked_sub(WINDOW_SIZE + lag).unwrap()..];
     crate::apply_window(&mut window_buf[..], input);
-    *x = window_buf.real_fft();
+    window_buf.real_fft_using(x);
 
     // In the original RNNoise code, the forward transform is normalized and the inverse
     // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
