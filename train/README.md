@@ -29,7 +29,7 @@ ffmpeg -i $file -f s16le -ac 1 -ar 48000 output.wav
 Once you have your speech and noise files, you need to use `nnnoiseless` to
 generate training features:
 ```
-cargo run --features=train --bin=train --count=<COUNT> --signal-glob=</PATH/TO/SPEECH/*.wav> --noise-glob=<PATH/TO/NOISE/*.wav> -o training.h5
+cargo run --features=train --bin=train --release -- --count=<COUNT> --signal-glob=</PATH/TO/SPEECH/*.wav> --noise-glob=<PATH/TO/NOISE/*.wav> -o training.h5
 ```
 where `<COUNT>` is the number of frames of training data that you want to
 generate. (I don't know what the optimal number is, but 10 million seems to be
