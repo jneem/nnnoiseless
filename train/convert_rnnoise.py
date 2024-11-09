@@ -21,18 +21,11 @@ with open(in_name, 'r') as in_file:
         sys.exit(1)
 
     data = in_file.read()
-    in_nums = [int(s) for s in data.split()]
 
     # Convert to an unsigned byte (which, in twos complement, represents the same number)
-    def cvt(n):
-        if n < 0:
-            return 256 + n
-        else:
-            return n
-
-    nums = [cvt(n) for n in in_nums]
+    nums = bytearray(int(s) % 256 for s in data.split())
 
     with open(out_name, 'wb') as out_file:
-        out_file.write(bytearray(nums))
+        out_file.write(nums)
 
         print(f'Converted {in_name} to {out_name}')
