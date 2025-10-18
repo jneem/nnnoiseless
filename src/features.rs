@@ -9,7 +9,7 @@ use crate::{
     common, Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
     PITCH_BUF_SIZE, WINDOW_SIZE,
 };
-use easyfft::prelude::*;
+use easyfft::{dyn_size::realfft::DynRealDft, prelude::*};
 
 /// Contains the necessary state to compute the features of audio input and synthesize the output.
 ///
