@@ -240,7 +240,7 @@ impl Default for RnnModel {
 }
 
 impl DenseLayer {
-    fn matrix(&self) -> SubMatrix {
+    fn matrix(&self) -> SubMatrix<'_> {
         SubMatrix {
             data: self.input_weights.as_ref(),
             stride: self.nb_neurons,
@@ -273,7 +273,7 @@ impl DenseLayer {
 }
 
 impl GruLayer {
-    fn input_submatrix(&self, offset: usize) -> SubMatrix {
+    fn input_submatrix(&self, offset: usize) -> SubMatrix<'_> {
         SubMatrix {
             data: self.input_weights.as_ref(),
             stride: self.nb_neurons * 3,
@@ -281,7 +281,7 @@ impl GruLayer {
         }
     }
 
-    fn rec_submatrix(&self, offset: usize) -> SubMatrix {
+    fn rec_submatrix(&self, offset: usize) -> SubMatrix<'_> {
         SubMatrix {
             data: self.recurrent_weights.as_ref(),
             stride: self.nb_neurons * 3,

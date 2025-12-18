@@ -4,7 +4,7 @@ use std::process::Command;
 
 #[test]
 fn basic_usage() -> anyhow::Result<()> {
-    let mut cmd = Command::cargo_bin("nnnoiseless")?;
+    let mut cmd = Command::new(assert_cmd::cargo_bin!("nnnoiseless"));
     let tmp = assert_fs::TempDir::new()?;
     let input = tmp.child("input.raw");
     let output = tmp.child("output.raw");
@@ -18,7 +18,7 @@ fn basic_usage() -> anyhow::Result<()> {
 
 #[test]
 fn invalid_wav() -> anyhow::Result<()> {
-    let mut cmd = Command::cargo_bin("nnnoiseless")?;
+    let mut cmd = Command::new(assert_cmd::cargo_bin!("nnnoiseless"));
     let tmp = assert_fs::TempDir::new()?;
     let input = tmp.child("input.wav");
     let output = tmp.child("output.wav");
@@ -31,7 +31,7 @@ fn invalid_wav() -> anyhow::Result<()> {
 
     let input = tmp.child("input.raw");
     input.write_binary(&vec![0u8; 480 * 10])?;
-    let mut cmd = Command::cargo_bin("nnnoiseless")?;
+    let mut cmd = Command::new(assert_cmd::cargo_bin!("nnnoiseless"));
     cmd.arg("--wav-in").arg(input.path()).arg(output.path());
     cmd.assert()
         .failure()
