@@ -5,7 +5,7 @@
 //!
 //! [`DenoiseState`]: struct.DenoiseState.html
 
-use once_cell::sync::OnceCell;
+use std::sync::LazyLock;
 
 #[cfg(any(cargo_c, feature = "capi"))]
 mod capi;
@@ -96,67 +96,57 @@ fn interp_band_gain(out: &mut [f32], band_e: &[f32]) {
     }
 }
 
-struct CommonState {
-    window: [f32; WINDOW_SIZE],
-    dct_table: [f32; NB_BANDS * NB_BANDS],
-    wnorm: f32,
-}
+static WINDOW: LazyLock<[f32; WINDOW_SIZE]> = LazyLock::new(|| {
+    let pi = std::f64::consts::PI;
+    let mut window = [0.0; WINDOW_SIZE];
+    for i in 0..FRAME_SIZE {
+        let sin = (0.5 * pi * (i as f64 + 0.5) / FRAME_SIZE as f64).sin();
+        window[i] = (0.5 * pi * sin * sin).sin() as f32;
+        window[WINDOW_SIZE - i - 1] = (0.5 * pi * sin * sin).sin() as f32;
+    }
+    window
+});
 
-static COMMON: OnceCell<CommonState> = OnceCell::new();
+static WNORM: LazyLock<f32> = LazyLock::new(|| {
+    let window = &*WINDOW;
+    1_f32 / window.iter().map(|x| x * x).sum::<f32>()
+});
 
-fn common() -> &'static CommonState {
-    if COMMON.get().is_none() {
-        let pi = std::f64::consts::PI;
-        let mut window = [0.0; WINDOW_SIZE];
-        for i in 0..FRAME_SIZE {
-            let sin = (0.5 * pi * (i as f64 + 0.5) / FRAME_SIZE as f64).sin();
-            window[i] = (0.5 * pi * sin * sin).sin() as f32;
-            window[WINDOW_SIZE - i - 1] = (0.5 * pi * sin * sin).sin() as f32;
-        }
-        let wnorm = 1_f32 / window.iter().map(|x| x * x).sum::<f32>();
-
-        let mut dct_table = [0.0; NB_BANDS * NB_BANDS];
-        for i in 0..NB_BANDS {
-            for j in 0..NB_BANDS {
-                dct_table[i * NB_BANDS + j] =
-                    ((i as f64 + 0.5) * j as f64 * pi / NB_BANDS as f64).cos() as f32;
-                if j == 0 {
-                    dct_table[i * NB_BANDS + j] *= 0.5f32.sqrt();
-                }
+static DCT_TABLE: LazyLock<[f32; NB_BANDS * NB_BANDS]> = LazyLock::new(|| {
+    let pi = std::f64::consts::PI;
+    let mut dct_table = [0.0; NB_BANDS * NB_BANDS];
+    for i in 0..NB_BANDS {
+        for j in 0..NB_BANDS {
+            dct_table[i * NB_BANDS + j] =
+                ((i as f64 + 0.5) * j as f64 * pi / NB_BANDS as f64).cos() as f32;
+            if j == 0 {
+                dct_table[i * NB_BANDS + j] *= 0.5f32.sqrt();
             }
         }
-
-        let _ = COMMON.set(CommonState {
-            window,
-            dct_table,
-            wnorm,
-        });
     }
-    COMMON.get().unwrap()
-}
+    dct_table
+});
 
 /// A brute-force DCT (discrete cosine transform) of size NB_BANDS.
 pub(crate) fn dct(out: &mut [f32], x: &[f32]) {
-    let c = common();
+    let dct_table = &*DCT_TABLE;
     for i in 0..NB_BANDS {
         let mut sum = 0.0;
         for j in 0..NB_BANDS {
-            sum += x[j] * c.dct_table[j * NB_BANDS + i];
+            sum += x[j] * dct_table[j * NB_BANDS + i];
         }
         out[i] = (sum as f64 * (2.0 / NB_BANDS as f64).sqrt()) as f32;
     }
 }
 
 fn apply_window(output: &mut [f32], input: &[f32]) {
-    let c = common();
-    for (x, &y, &w) in util::zip3(output, input, &c.window[..]) {
+    for (x, &y, &w) in util::zip3(output, input, &*WINDOW) {
         *x = y * w;
     }
 }
 
 fn apply_window_in_place(xs: &mut [f32]) {
-    let c = common();
-    for (x, &w) in xs.iter_mut().zip(&c.window[..]) {
+    for (x, &w) in xs.iter_mut().zip(&*WINDOW) {
         *x *= w;
     }
 }

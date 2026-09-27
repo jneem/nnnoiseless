@@ -6,8 +6,8 @@
 //! neural nets.
 
 use crate::{
-    common, Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
-    PITCH_BUF_SIZE, WINDOW_SIZE,
+    Complex, CEPS_MEM, FRAME_SIZE, FREQ_SIZE, NB_BANDS, NB_DELTA_CEPS, NB_FEATURES,
+    PITCH_BUF_SIZE, WINDOW_SIZE, WNORM,
 };
 use easyfft::{dyn_size::realfft::DynRealDft, prelude::*};
 
@@ -291,8 +291,7 @@ fn transform_input(
 
     // In the original RNNoise code, the forward transform is normalized and the inverse
     // tranform isn't. `rustfft` doesn't normalize either one, so we do it ourselves.
-    let norm = common().wnorm;
-    *x *= norm;
+    *x *= *WNORM;
 
     crate::compute_band_corr(ex, x, x);
 }
