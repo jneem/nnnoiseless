@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Error};
 use clap::{arg, crate_version, Command};
@@ -232,43 +232,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::new("nnnoiseless")
             .version(crate_version!())
             .about("Remove noise from audio files")
-            .arg(arg!(<INPUT> "input audio file"))
-            .arg(arg!(<OUTPUT> "output audio file"))
+            .arg(arg!(<INPUT> "input audio file")
+                    .value_parser(clap::value_parser!(PathBuf)))
+            .arg(arg!(<OUTPUT> "output audio file")
+                    .value_parser(clap::value_parser!(PathBuf)))
             .arg(arg!(--"wav-in" "the input is a wav file (default is to detect wav files by their filename"))
             .arg(arg!(--"wav-out" "the output is a wav file (default is to detect wav files by their filename)"))
-            .arg(arg!(--"sample-rate" <RATE> "for raw input, the sample rate of the input (defaults to 48kHz)").required(false)
-                    .validator(|s| s.parse::<f64>()),
+            .arg(arg!(--"sample-rate" <RATE> "for raw input, the sample rate of the input")
+                    .required(false)
+                    .value_parser(clap::value_parser!(f64))
+                    .default_value("48000"),
             )
             .arg(
-                arg!(--channels <CHANNELS> "for raw input, the number of channels (defaults to 1)")
+                arg!(--channels <CHANNELS> "for raw input, the number of channels")
                     .required(false)
-                    .validator(|s| s.parse::<u16>()),
+                    .value_parser(clap::value_parser!(u16))
+                    .default_value("1"),
             )
             .arg(arg!(--model <PATH> "path to a custom model file").required(false))
             .get_matches();
 
-    let in_name = matches.value_of("INPUT").unwrap();
-    let out_name = matches.value_of("OUTPUT").unwrap();
+    let in_name = matches.get_one::<PathBuf>("INPUT").unwrap();
+    let out_name = matches.get_one::<PathBuf>("OUTPUT").unwrap();
     let in_file = BufReader::new(
         File::open(in_name)
-            .with_context(|| format!("Failed to open input file \"{}\"", in_name))?,
+            .with_context(|| format!("Failed to open input file \"{}\"", in_name.display()))?,
     );
     let out_file = BufWriter::new(
         File::create(out_name)
-            .with_context(|| format!("Failed to open output file \"{}\"", out_name))?,
+            .with_context(|| format!("Failed to open output file \"{}\"", out_name.display()))?,
     );
-    let in_wav =
-        matches.is_present("wav-in") || Path::new(in_name).extension() == Some("wav".as_ref());
-    let out_wav =
-        matches.is_present("wav-out") || Path::new(out_name).extension() == Some("wav".as_ref());
+    let in_wav = matches.get_flag("wav-in") || in_name.extension() == Some("wav".as_ref());
+    let out_wav = matches.get_flag("wav-out") || out_name.extension() == Some("wav".as_ref());
 
     let (mut samples, channels) = if in_wav {
         let wav_reader = WavReader::new(in_file)?;
         let channels = wav_reader.spec().channels;
         (wav_samples(wav_reader), channels)
     } else {
-        let sample_rate = matches.value_of_t("sample-rate").unwrap_or(48_000.0);
-        let channels = matches.value_of_t("channels").unwrap_or(1);
+        let sample_rate = *matches.get_one::<f64>("sample-rate").unwrap();
+        let channels = *matches.get_one::<u16>("channels").unwrap();
         (
             raw_samples(in_file, channels as usize, sample_rate),
             channels,
@@ -291,7 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
-    let model = if let Some(model_path) = matches.value_of("model") {
+    let model = if let Some(model_path) = matches.get_one::<PathBuf>("model") {
         let data = std::fs::read(model_path).context("Failed to open model file")?;
         RnnModel::from_bytes(&data).context("Failed to parse model file")?
     } else {
