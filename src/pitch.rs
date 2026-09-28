@@ -4,16 +4,13 @@ use crate::{PITCH_BUF_SIZE, PITCH_FRAME_SIZE, PITCH_MAX_PERIOD, PITCH_MIN_PERIOD
 pub(crate) struct PitchFinder {
     last_period: usize,
     last_gain: f32,
-    // A buffer of size PITCH_BUF_SIZE / 2.
-    pitch_buf: Vec<f32>,
+    pitch_buf: [f32; PITCH_BUF_SIZE / 2],
     // Scratch buffer of size PITCH_MAX_PERIOD + 1. We'll also use it for a scratch buffer of size
     // PITCH_FRAME_SIZE  / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4,
     // which is smaller.
-    scratch: Vec<f32>,
-    // Scratch buffer of size PITCH_FRAME_SIZE / 4.
-    scratch2: Vec<f32>,
-    // Scratch buffer of length (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2.
-    scratch3: Vec<f32>,
+    scratch: [f32; PITCH_MAX_PERIOD + 1],
+    scratch2: [f32; PITCH_FRAME_SIZE / 4],
+    scratch3: [f32; (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2],
 }
 
 impl PitchFinder {
@@ -23,10 +20,10 @@ impl PitchFinder {
                 >= PITCH_FRAME_SIZE / 4 + (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 4
         );
 
-        let pitch_buf = vec![0.0; PITCH_BUF_SIZE / 2];
-        let scratch = vec![0.0; PITCH_MAX_PERIOD + 1];
-        let scratch2 = vec![0.0; PITCH_FRAME_SIZE / 4];
-        let scratch3 = vec![0.0; (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2];
+        let pitch_buf = [0.0; PITCH_BUF_SIZE / 2];
+        let scratch = [0.0; PITCH_MAX_PERIOD + 1];
+        let scratch2 = [0.0; PITCH_FRAME_SIZE / 4];
+        let scratch3 = [0.0; (PITCH_MAX_PERIOD - 3 * PITCH_MIN_PERIOD) / 2];
         PitchFinder {
             last_period: 0,
             last_gain: 0.0,

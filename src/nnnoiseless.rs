@@ -137,7 +137,7 @@ trait FrameWriter {
 
 struct RawFrameWriter<W: Write> {
     writer: W,
-    buf: Vec<u8>,
+    buf: [u8; FRAME_SIZE * 2],
 }
 
 struct WavFrameWriter<W: Write + Seek> {
@@ -290,7 +290,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Box::new(RawFrameWriter {
             writer: out_file,
-            buf: vec![0; FRAME_SIZE * 2],
+            buf: [0; FRAME_SIZE * 2],
         })
     };
 
@@ -302,8 +302,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let channels = channels as usize;
-    let mut in_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
-    let mut out_bufs = vec![vec![0.0; FRAME_SIZE]; channels];
+    let mut in_bufs = vec![[0.0; FRAME_SIZE]; channels];
+    let mut out_bufs = vec![[0.0; FRAME_SIZE]; channels];
     let mut out_buf = vec![0.0; FRAME_SIZE * channels];
     let mut states = vec![DenoiseState::with_model(&model); channels];
     let mut first = true;

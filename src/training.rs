@@ -272,9 +272,9 @@ struct NoiseSimulator {
     lowpass: usize,
     band_lp: usize,
 
-    sig_buf: Vec<f32>,
-    noise_buf: Vec<f32>,
-    out_buf: Vec<f32>,
+    sig_buf: [f32; nnnoiseless::FRAME_SIZE],
+    noise_buf: [f32; nnnoiseless::FRAME_SIZE],
+    out_buf: [f32; nnnoiseless::FRAME_SIZE],
 
     signal_resp_mem: [f32; 2],
     noise_resp_mem: [f32; 2],
@@ -310,9 +310,9 @@ impl NoiseSimulator {
             lowpass: nnnoiseless::FREQ_SIZE,
             band_lp: nnnoiseless::NB_BANDS - 1,
 
-            sig_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
-            noise_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
-            out_buf: vec![0.0; nnnoiseless::FRAME_SIZE],
+            sig_buf: [0.0; nnnoiseless::FRAME_SIZE],
+            noise_buf: [0.0; nnnoiseless::FRAME_SIZE],
+            out_buf: [0.0; nnnoiseless::FRAME_SIZE],
 
             signal_resp_mem: [0.0, 0.0],
             noise_resp_mem: [0.0, 0.0],

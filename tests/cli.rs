@@ -8,7 +8,7 @@ fn basic_usage() -> anyhow::Result<()> {
     let tmp = assert_fs::TempDir::new()?;
     let input = tmp.child("input.raw");
     let output = tmp.child("output.raw");
-    input.write_binary(&vec![0u8; 480 * 10])?;
+    input.write_binary(&[0u8; 480 * 10])?;
 
     cmd.arg(input.path()).arg(output.path());
     cmd.assert().success();
@@ -22,7 +22,7 @@ fn invalid_wav() -> anyhow::Result<()> {
     let tmp = assert_fs::TempDir::new()?;
     let input = tmp.child("input.wav");
     let output = tmp.child("output.wav");
-    input.write_binary(&vec![0u8; 480 * 10])?;
+    input.write_binary(&[0u8; 480 * 10])?;
 
     cmd.arg(input.path()).arg(output.path());
     cmd.assert()
@@ -30,7 +30,7 @@ fn invalid_wav() -> anyhow::Result<()> {
         .stderr(predicates::str::contains("no RIFF tag found"));
 
     let input = tmp.child("input.raw");
-    input.write_binary(&vec![0u8; 480 * 10])?;
+    input.write_binary(&[0u8; 480 * 10])?;
     let mut cmd = Command::new(assert_cmd::cargo_bin!("nnnoiseless"));
     cmd.arg("--wav-in").arg(input.path()).arg(output.path());
     cmd.assert()
